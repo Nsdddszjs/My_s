@@ -30,9 +30,15 @@ class EthicsGuardTest(unittest.TestCase):
     def test_fake_survey_by_standard_answer(self):
         self.assertEqual(ethics(["按标准答案作答"]), AbortReason.ETHICS_FAKE_SURVEY)
     def test_region_rejected(self):
-        self.assertEqual(ethics(["点每日打卡"], regions=["新疆", "云南"]), AbortReason.REGION_REJECTED)
+        # 地区名单是任务的「允许地区」：名单非空且不含本机所在省份即地区不匹配。
+        self.assertEqual(ethics(["点每日打卡"], regions=["新疆", "北京"]), AbortReason.REGION_REJECTED)
         self.assertEqual(DEVICE_REGION, "云南")
-        self.assertIsNone(ethics(["签到"], regions=["新疆"]))
+        self.assertEqual(ethics(["签到"], regions=["新疆"]), AbortReason.REGION_REJECTED)
+        self.assertIsNone(ethics(["签到"], regions=["新疆", "云南"]))
+        self.assertIsNone(ethics(["签到"]))
+    def test_region_before_survey(self):
+        # P743 类：既是问卷又限地区，地区是客观事实，应归因为地区不匹配。
+        self.assertEqual(ethics(["完成一份调查"], regions=["泰国"]), AbortReason.REGION_REJECTED)
 
 
 class FeasibilityGuardTest(unittest.TestCase):
@@ -53,6 +59,32 @@ class FeasibilityGuardTest(unittest.TestCase):
         self.assertEqual(feasibility(["待核"]), (Verdict.ABORT, AbortReason.UNKNOWN_STEPS))
     def test_do(self):
         self.assertEqual(feasibility(["点每日打卡", "签到"], reward=1.0), (Verdict.DO, None))
+    def test_region_beats_survey_in_feasibility(self):
+        self.assertEqual(feasibility(["完成一份调查"], regions=["泰国"]),
+                         (Verdict.ABORT, AbortReason.REGION_REJECTED))
+    def test_low_reward_does_not_override_unknown_steps(self):
+        self.assertEqual(feasibility(["待核"], reward=0.13),
+                         (Verdict.ABORT, AbortReason.UNKNOWN_STEPS))
+    def test_low_reward_does_not_override_wechat(self):
+        self.assertEqual(feasibility(["微信扫码"], reward=0.17),
+                         (Verdict.ABORT, AbortReason.NEEDS_WECHAT))
+    def test_low_reward_when_no_other_reason(self):
+        self.assertEqual(feasibility(["点每日打卡", "签到"], reward=0.17),
+                         (Verdict.ABORT, AbortReason.LOW_REWARD))
+    def test_alipay_before_wechat(self):
+        # 特异词优先：「支付宝扫码」先命中支付宝，不被通用的「扫码」抢先。
+        self.assertEqual(feasibility(["打开支付宝扫码"]), (Verdict.ABORT, AbortReason.NEEDS_ALIPAY))
+    def test_scanner_before_wechat(self):
+        self.assertEqual(feasibility(["保存图片后扫码"]), (Verdict.ABORT, AbortReason.NEEDS_SCANNER))
+    def test_third_party_app_name_table(self):
+        # 「复制口令打开得物弹窗助力打卡」没有「下载」字样，靠 App 名表兜底。
+        self.assertEqual(feasibility(["复制口令打开得物弹窗助力打卡"]),
+                         (Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP))
+    def test_open_non_browser_app_pattern(self):
+        self.assertEqual(feasibility(["打开星巴克小程序"]),
+                         (Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP))
+    def test_open_link_is_not_third_party_app(self):
+        self.assertEqual(feasibility(["打开链接填写信息"]), (Verdict.DO, None))
 
 
 class SchemaTest(unittest.TestCase):
