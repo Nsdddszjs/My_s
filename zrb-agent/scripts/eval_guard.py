@@ -67,13 +67,17 @@ def build_steps(page_text):
 
 
 def build_bounty(row):
-    """把一条种子样本还原为 Bounty；restricted_regions 是任务的允许地区名单。"""
+    """把一条种子样本还原为 Bounty；兼容旧字段 restricted_regions（按 allowed 处理）。"""
+    reward = row["reward"]
+    allowed = row.get("allowed_regions", row.get("restricted_regions", []))
+    forbidden = row.get("forbidden_regions", [])
     return Bounty(
         id=row["id"],
         title=row["title"],
-        reward=float(row["reward"]),
+        reward=None if reward is None else float(reward),
         steps=build_steps(row["page_text"]),
-        restricted_regions=list(row.get("restricted_regions") or []),
+        allowed_regions=None if allowed is None else list(allowed),
+        forbidden_regions=None if forbidden is None else list(forbidden),
     )
 
 
