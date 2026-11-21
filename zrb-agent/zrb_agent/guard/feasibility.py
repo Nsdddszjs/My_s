@@ -34,6 +34,36 @@ _OPEN_APP_PATTERN = re.compile(
 _BROWSER_WHITELIST = ("浏览器", "链接", "网页", "百度", "搜狗", "必应")
 _MIN_REWARD = 0.30  # 低于三角钱的悬赏不值得执行。
 
+# 隐性登录动词：App 内动作要能追溯「是谁做的」，数据挂在账号上，因此必然要求
+# 登录。真机实测（红果免费短剧）说明文案可以完全不写「登录」，只有这些动作词
+# 暴露登录门槛；纯浏览器打开链接、应用商店下载、对自己屏幕截图不在此列。
+_LOGIN_ACTION_TERMS = (
+    "助力", "关注", "点赞", "收藏", "评论", "转发", "搜索", "加购物车", "下单",
+    "签到", "打卡", "浏览指定", "观看", "进店", "开通", "送礼物", "添加",
+)
+# 显式登录词：「账号」必须收录——真机语料【秋水织素妆】的唯一暴露点就是步骤
+# 里的「账号手机号」；只写「下载」的步骤会先命中第三方 App 规则，所以登录态
+# 必须排在 App 判定之前。
+_LOGIN_EXPLICIT_TERMS = (
+    "账号", "登录", "手机号注册", "绑定手机", "一键登录", "登录后",
+)
+# 人群限定词：描述的是「账号处于什么状态」，不是「任务要做什么」。要证明自己
+# 是新用户/老用户/每个手机号只能做一次，平台必须先有一个可查的账号，等价于
+# 手机号 + 短信验证码注册。真机文案写「一个手机号一次」，与「每个手机号一次」
+# 同义，两个变体都收录。
+_AUDIENCE_TERMS = (
+    "新用户", "新会员", "老用户", "回归", "首次", "三十天回归",
+    "每个手机号一次", "一个手机号一次", "勿多账号", "仅限新玩家",
+)
+
+
+def _login_text(bounty: Bounty) -> str:
+    """把可能暴露登录态的三个来源拼成一段文本：type、limite 与步骤。"""
+    return " ".join(
+        part for part in (bounty.type, bounty.limite, *bounty.steps) if part
+    )
+
+
 # 不含具体动作的套话：整条步骤只剩这些词，等于没说清要干什么。
 _VAGUE_STEP_MARKERS = ("按页面提示", "按提示", "详见", "待核", "按说明", "见页面", "以页面为准")
 # 套话步骤都很短；10 字的「按提示操作后截图上传」带具体动作，必须放行，所以上限取 9。
@@ -63,6 +93,16 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
         return Verdict.ABORT, AbortReason.NEEDS_SCANNER
     if any(term in text for term in _WECHAT_TERMS):
         return Verdict.ABORT, AbortReason.NEEDS_WECHAT
+    # 登录态判定必须排在第三方 App 之前：下载类步骤几乎都会命中「下载/安装」，
+    # 若先判 App，会把「下载后凭新用户身份做任务」错误归因为 App 门槛。
+    login_text = _login_text(bounty)
+    if any(term in login_text for term in _LOGIN_EXPLICIT_TERMS):
+        return Verdict.ABORT, AbortReason.NEEDS_LOGIN
+    if any(term in login_text for term in _AUDIENCE_TERMS):
+        # 人群限定隐含账号：平台要能查到账号状态，就必须先注册登录。
+        return Verdict.ABORT, AbortReason.NEEDS_LOGIN
+    if any(term in login_text for term in _LOGIN_ACTION_TERMS):
+        return Verdict.ABORT, AbortReason.NEEDS_LOGIN
     if any(term in text for term in _THIRD_PARTY_TERMS):
         return Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP
     if any(app in text for app in _THIRD_PARTY_APPS):

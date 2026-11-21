@@ -7,15 +7,17 @@ from zrb_agent.guard.feasibility import check_feasibility
 from zrb_agent.schema import AbortReason, Bounty, Verdict
 
 
-def make_bounty(steps, reward=1.0, allowed_regions=(), forbidden_regions=()):
+def make_bounty(steps, reward=1.0, allowed_regions=(), forbidden_regions=(), **fields):
     """构造测试任务，默认奖励 1 元、地区字段已知且为空（无地区限制）。
 
     需要「没读到」时显式传 None；空列表表示「读到了，确实为空」。
+    ``fields`` 用来透传详情页字段（``type`` / ``limite``）。
     """
     return Bounty(
         "t1", "测试任务", reward, list(steps),
         None if allowed_regions is None else list(allowed_regions),
         None if forbidden_regions is None else list(forbidden_regions),
+        **fields,
     )
 
 
@@ -81,9 +83,9 @@ class FeasibilityGuardTest(unittest.TestCase):
     def test_needs_third_party_app(self):
         self.assertEqual(feasibility(["下载 App"]), (Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP))
     def test_low_reward(self):
-        self.assertEqual(feasibility(["点每日打卡"], reward=0.17), (Verdict.ABORT, AbortReason.LOW_REWARD))
+        self.assertEqual(feasibility(["截图上传"], reward=0.17), (Verdict.ABORT, AbortReason.LOW_REWARD))
     def test_reward_none_is_not_low_reward(self):
-        self.assertEqual(feasibility(["点每日打卡", "签到"], reward=None),
+        self.assertEqual(feasibility(["截图上传"], reward=None),
                          (Verdict.ABORT, AbortReason.UNKNOWN_REWARD))
     def test_unknown_steps(self):
         self.assertEqual(feasibility(["待核"]), (Verdict.ABORT, AbortReason.UNKNOWN_STEPS))
@@ -96,8 +98,45 @@ class FeasibilityGuardTest(unittest.TestCase):
     def test_one_clear_step_is_enough(self):
         # 只要有一条步骤说清了，就还能做。
         self.assertEqual(feasibility(["按页面提示操作", "截图上传"]), (Verdict.DO, None))
+    def test_needs_login_by_implicit_action(self):
+        # 红果免费短剧真机步骤：全文没有「登录」二字，但助力/搜索挂在账号上。
+        self.assertEqual(feasibility([
+            "复制链接前往浏览器",
+            "再依次复制口令打开红果短剧搜索🔎",
+            "助力所有，再右下角我的截图",
+        ]), (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_explicit_account(self):
+        # 秋水织素妆：唯一暴露点是步骤里的「账号手机号」，不能被「下载」抢先。
+        self.assertEqual(feasibility([
+            "复制到浏览器打开下载", "代号众人帮，账号手机号",
+        ]), (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_audience_type(self):
+        # ai荔枝：步骤只写「下载」，但 type 的「新用户」把它锁死。
+        self.assertEqual(feasibility(["应用商店下载ai荔枝"], type="新用户"),
+                         (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_audience_limite(self):
+        # 同一 App 另一条：limite 明确写新用户，步骤里还有「老用户别来」。
+        self.assertEqual(feasibility([
+            "应用商店下载ai荔枝（老用户别来）", "打开链接复制口令打开ai荔枝助力",
+        ], limite="新用户 认证绑卡分类"), (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_audience_in_steps(self):
+        self.assertEqual(feasibility(["三十天回归后再助力"]),
+                         (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_audience_multiple_accounts(self):
+        # 词绘山河：type 写「每日一次 勿多账号提交」，答题按账号计。
+        self.assertEqual(feasibility(["复制浏览器打开下载", "正确答题"],
+                                     type="每日一次 勿多账号提交"),
+                         (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_download_only_corpus_task_is_never_do(self):
+        # 【仙遇】3 元真机语料：唯一一步只写浏览器下载安装，真实达标条件在
+        # sm（操作说明图）里。文本守卫读不到图片里的条件，至少必须 ABORT；
+        # 精确判 UNKNOWN_STEPS 需要感知层先给出「条件不可读」（#37/#41）。
+        verdict, _ = feasibility([
+            "浏览器打开链接，直接下载安装，选择上方apk按键，找到\"仙遇\"，点击下载",
+        ])
+        self.assertIs(verdict, Verdict.ABORT)
     def test_do(self):
-        self.assertEqual(feasibility(["点每日打卡", "签到"], reward=1.0), (Verdict.DO, None))
+        self.assertEqual(feasibility(["截图上传"], reward=1.0), (Verdict.DO, None))
     def test_region_beats_survey_in_feasibility(self):
         self.assertEqual(feasibility(["完成一份调查"], allowed_regions=["泰国"]),
                          (Verdict.ABORT, AbortReason.REGION_REJECTED))
@@ -108,7 +147,7 @@ class FeasibilityGuardTest(unittest.TestCase):
         self.assertEqual(feasibility(["微信扫码"], reward=0.17),
                          (Verdict.ABORT, AbortReason.NEEDS_WECHAT))
     def test_low_reward_when_no_other_reason(self):
-        self.assertEqual(feasibility(["点每日打卡", "签到"], reward=0.17),
+        self.assertEqual(feasibility(["截图上传"], reward=0.17),
                          (Verdict.ABORT, AbortReason.LOW_REWARD))
     def test_vpn_beats_low_reward(self):
         self.assertEqual(feasibility(["ip调到北京"], reward=0.17),
@@ -119,8 +158,9 @@ class FeasibilityGuardTest(unittest.TestCase):
     def test_scanner_before_wechat(self):
         self.assertEqual(feasibility(["保存图片后扫码"]), (Verdict.ABORT, AbortReason.NEEDS_SCANNER))
     def test_third_party_app_name_table(self):
-        # 「复制口令打开得物弹窗助力打卡」没有「下载」字样，靠 App 名表兜底。
-        self.assertEqual(feasibility(["复制口令打开得物弹窗助力打卡"]),
+        # 「复制口令打开得物弹窗」没有「下载」字样，靠 App 名表兜底；
+        # 不带「助力/打卡」，否则会先命中隐性登录，测不到 App 名表。
+        self.assertEqual(feasibility(["复制口令打开得物弹窗"]),
                          (Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP))
     def test_open_non_browser_app_pattern(self):
         self.assertEqual(feasibility(["打开星巴克小程序"]),
@@ -131,7 +171,8 @@ class FeasibilityGuardTest(unittest.TestCase):
 
 class SchemaTest(unittest.TestCase):
     def test_dict_round_trip(self):
-        bounty = make_bounty(["签到"], reward=0.5, allowed_regions=["云南"])
+        bounty = make_bounty(["截图上传"], reward=0.5, allowed_regions=["云南"],
+                             type="新用户", limite="一个手机号一次")
         self.assertEqual(Bounty.from_dict(bounty.to_dict()), bounty)
         unknown = Bounty.from_dict(dict(id="u", title="未知", reward=None, steps=["签到"],
                                         allowed_regions=None, forbidden_regions=None))
