@@ -49,7 +49,7 @@ _SHORT_REGION_RE = re.compile(
 )
 # 「必须到指定地区：A、B」这种白名单句式；只有明确列出名单时才抽取。
 _REGION_ALLOW_RE = re.compile(r"必须到(?:指定|以下)地区\s*[：:]\s*([^\n]+)")
-_REGION_SPLIT_RE = re.compile(r"[、,，\s]+")
+_REGION_SPLIT_RE = re.compile(r"[、,，\s…]+")
 # 名单后面常跟一句说明（如「手机号跟ip是这些地区的不要做」），按词过滤掉。
 _REGION_NOISE = ("手机", "ip", "不要", "不能", "地区", "条件", "报名", "限制",
                  "如下", "例如", "其中", "之一", "任意", "即可", "打开", "链接",

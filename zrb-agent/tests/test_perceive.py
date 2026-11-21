@@ -251,6 +251,13 @@ class RegionExtractionTest(unittest.TestCase):
             self.assertIn(region, regions)
         self.assertNotIn("手机号跟ip是这些地区的不要做", regions)
 
+    def test_ellipsis_does_not_glue_next_sentence(self) -> None:
+        # 滚屏后的真机文本用省略号截断名单，后面的说明句不能粘进最后一个地区。
+        regions = extract_regions([
+            "禁止地区：新疆，甘肃，云南…手机号跟ip是这些地区的不要做",
+        ])
+        self.assertEqual(regions, ["新疆", "甘肃", "云南"])
+
     def test_condition_line_with_chinese_comma(self) -> None:
         xml = """<hierarchy>
           <node bounds="[0,0][10,10]" text="报名条件：北京、西藏 两个手机号地区不能做" resource-id="com.jianzhiku.zhongrenbang:id/limite" />
