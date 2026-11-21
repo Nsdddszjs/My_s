@@ -48,6 +48,7 @@ REAL_TOP_XML = """<hierarchy rotation="0">
   <node bounds="[500,930][700,970]" text="1931人" resource-id="com.jianzhiku.zhongrenbang:id/num_count" />
   <node bounds="[700,930][900,970]" text="5分钟" resource-id="com.jianzhiku.zhongrenbang:id/avgreview" />
   <node bounds="[900,930][1045,970]" text="24小时内" resource-id="com.jianzhiku.zhongrenbang:id/timeleft" />
+  <node bounds="[70,1100][1045,1163]" text="报名条件/限制" resource-id="com.jianzhiku.zhongrenbang:id/view_limit" />
   <node bounds="[70,1163][1045,1221]" text="北京，西藏这两个手机号地区不能做" resource-id="com.jianzhiku.zhongrenbang:id/limite" />
   <node bounds="[85,1409][143,1461]" text="1" resource-id="com.jianzhiku.zhongrenbang:id/setpcount_nocap" />
   <node bounds="[158,1386][1030,1821]" text="禁止&#10;地区：新疆，甘肃，海南，云南，北京，上海，澳门特别行政区、宁夏回族自治区、内蒙古自治区、香港特别行政区、西藏自治区、台湾省、青海省，湖南湘西土家族苗族自治州，吉林朝鲜族自治州，手机号跟ip是这些地区的不要做" resource-id="com.jianzhiku.zhongrenbang:id/step_detail_nocap" />
