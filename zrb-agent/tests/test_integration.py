@@ -47,25 +47,35 @@ VAGUE_STEPS_XML = """<?xml version="1.0" encoding="UTF-8"?>
 </hierarchy>"""
 
 
-def run_pipeline(xml_text: str, activity: str = ".DetailActivity"):
-    """把原始 UI dump 走完 perceive → guard，返回 (Verdict, AbortReason | None)。"""
+def run_pipeline(xml_text: str, activity: str = ".DetailActivity",
+                 *, allowed_regions: bool = False):
+    """把原始 UI dump 走完 perceive → guard，返回 (Verdict, AbortReason | None)。
+
+    地区名单仍必须来自感知层；名单语义由夹具文案决定：REGION_LIMITED_XML 是
+    「仅限广州/…」白名单，其余夹具没有地区信息，按「已知无限制」的空列表喂，
+    避免 UNKNOWN_REGIONS 抢在套话步骤之前（黑白名单的生产映射属于 #32）。
+    """
     page = build_page_state(xml_text, activity)
     detail = classify_detail_page(page)
     if not detail["is_detail"]:
         raise AssertionError("夹具不是详情页，测试本身写错了")
+    regions = detail["restricted_regions_hint"]
+    region_fields = ({"allowed_regions": regions} if allowed_regions
+                     else {"forbidden_regions": []})
     bounty = Bounty(
-        id="fixture", title=page.texts[0], reward=detail["reward"] or 0.0,
+        id="fixture", title=page.texts[0], reward=detail["reward"],
         steps=detail["steps_text"],
         # 地区必须来自感知层，不能手填——#37 之前这里永远是 []。
-        restricted_regions=detail["restricted_regions_hint"])
+        **region_fields)
     return check_feasibility(bounty)
 
 
 class PerceiveToGuardTest(unittest.TestCase):
     def test_region_limited_aborts(self):
         """地区限制单：感知层必须抽出地区，守卫层必须拒。"""
-        self.assertEqual(run_pipeline(REGION_LIMITED_XML),
-                         (Verdict.ABORT, AbortReason.REGION_REJECTED))
+        self.assertEqual(
+            run_pipeline(REGION_LIMITED_XML, allowed_regions=True),
+            (Verdict.ABORT, AbortReason.REGION_REJECTED))
 
     def test_region_extracted_at_all(self):
         """单独断言抽取，失败时能立刻定位是抽取问题还是判定问题。"""
