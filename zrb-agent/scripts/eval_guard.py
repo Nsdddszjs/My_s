@@ -78,6 +78,7 @@ def build_bounty(row):
         steps=build_steps(row["page_text"]),
         allowed_regions=None if allowed is None else list(allowed),
         forbidden_regions=None if forbidden is None else list(forbidden),
+        type=row.get("type"), limite=row.get("limite"),
     )
 
 

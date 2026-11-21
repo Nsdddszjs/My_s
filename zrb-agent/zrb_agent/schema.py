@@ -16,6 +16,8 @@ class AbortReason(Enum):
     NEEDS_WECHAT = "NEEDS_WECHAT"
     NEEDS_ALIPAY = "NEEDS_ALIPAY"
     NEEDS_SCANNER = "NEEDS_SCANNER"
+    # 任务动作需要登录态（账号/手机号/短信验证码）才能完成。
+    NEEDS_LOGIN = "NEEDS_LOGIN"
     NEEDS_THIRD_PARTY_APP = "NEEDS_THIRD_PARTY_APP"
     UNKNOWN_REWARD = "UNKNOWN_REWARD"
     LOW_REWARD = "LOW_REWARD"
@@ -30,6 +32,10 @@ class Bounty:
     是白名单（非空且不含本机即拒），``forbidden_regions`` 是黑名单（含本机即拒），
     空列表表示该方向没有限制。两个地区字段都为 ``None`` 时返回 ``UNKNOWN_REGIONS``；
     两个字段同时非空是相反语义混用，构造时直接 ``ValueError``。
+
+    ``type`` / ``limite`` 是详情页的「类型标签」与「报名条件」原文。两者是
+    ``None`` 表示没读到，空串表示读到了但为空；登录态判定会读这两项（人群限定
+    词只出现在这两个字段的文案里），所以不要把没读到写成空串来冒充「无限制」。
     """
 
     id: str
@@ -38,6 +44,8 @@ class Bounty:
     steps: list[str]
     allowed_regions: list[str] | None = None
     forbidden_regions: list[str] | None = None
+    type: str | None = None
+    limite: str | None = None
 
     def __post_init__(self) -> None:
         """两个地区字段语义相反，同时非空说明调用方把两种名单混在了一起。"""
@@ -52,7 +60,8 @@ class Bounty:
     def from_dict(cls, data: dict) -> "Bounty":
         """从字典还原任务，兼容已废弃的 ``restricted_regions``（按 allowed 处理）。
 
-        字段缺失按「已知为空」处理，显式 ``null`` 才表示「没读到」。
+        地区字段缺失按「已知为空」处理，显式 ``null`` 才表示「没读到」；
+        ``type`` / ``limite`` 没有历史默认值，缺失与 ``null`` 都按「没读到」处理。
         """
         reward = data.get("reward")
         allowed = data.get("allowed_regions", data.get("restricted_regions", []))
@@ -63,4 +72,6 @@ class Bounty:
             steps=list(data.get("steps", [])),
             allowed_regions=None if allowed is None else list(allowed),
             forbidden_regions=None if forbidden is None else list(forbidden),
+            type=data.get("type"),
+            limite=data.get("limite"),
         )
