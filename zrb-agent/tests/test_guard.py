@@ -57,6 +57,15 @@ class FeasibilityGuardTest(unittest.TestCase):
         self.assertEqual(feasibility(["点每日打卡"], reward=0.17), (Verdict.ABORT, AbortReason.LOW_REWARD))
     def test_unknown_steps(self):
         self.assertEqual(feasibility(["待核"]), (Verdict.ABORT, AbortReason.UNKNOWN_STEPS))
+    def test_vague_steps_are_unknown(self):
+        # 「按页面提示操作」和「待核」等价，都是没说清要做什么。
+        self.assertEqual(feasibility(["按页面提示操作"]), (Verdict.ABORT, AbortReason.UNKNOWN_STEPS))
+    def test_long_vague_containing_step_is_ok(self):
+        # 长句里夹「按提示」，但整体有具体动作，不能误杀。
+        self.assertEqual(feasibility(["按提示操作后截图上传"]), (Verdict.DO, None))
+    def test_one_clear_step_is_enough(self):
+        # 只要有一条步骤说清了，就还能做。
+        self.assertEqual(feasibility(["按页面提示操作", "截图上传"]), (Verdict.DO, None))
     def test_do(self):
         self.assertEqual(feasibility(["点每日打卡", "签到"], reward=1.0), (Verdict.DO, None))
     def test_region_beats_survey_in_feasibility(self):

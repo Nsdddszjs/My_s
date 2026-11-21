@@ -27,6 +27,6 @@
 {"id": "S202611000407", "title": "S202611000407", "reward": 2.5, "verdict": "abort", "reason": "UNKNOWN_STEPS", "page_text": "S202611000407 赏金2.50元\n操作步骤：\n1.按页面提示操作"}
 {"id": "PJ-00208调查", "title": "PJ-00208调查", "reward": 1.5, "verdict": "abort", "reason": "UNKNOWN_STEPS", "page_text": "PJ-00208调查 赏金1.50元\n操作步骤：\n1.按页面提示操作"}
 {"id": "135771号调查10", "title": "135771号调查10", "reward": 1.5, "verdict": "abort", "reason": "UNKNOWN_STEPS", "page_text": "135771号调查10 赏金1.50元\n操作步骤：\n1.按页面提示操作"}
-{"id": "每日调查I", "title": "每日调查I", "reward": 0.0, "verdict": "abort", "reason": "LOW_REWARD", "page_text": "每日调查I 赏金0.00元\n操作步骤：\n1.打开链接进入问卷\n2.答题并提交"}
+{"id": "每日调查I", "title": "每日调查I", "reward": 0.0, "verdict": "abort", "reason": "ETHICS_FAKE_SURVEY", "page_text": "每日调查I 赏金0.00元\n操作步骤：\n1.打开链接进入问卷\n2.答题并提交"}
 {"id": "学习打卡", "title": "学习打卡", "reward": 1.0, "verdict": "do", "reason": null, "page_text": "学习打卡 赏金1.00元\n操作步骤：\n1.点每日打卡\n2.截图上传"}
 {"id": "每日签到领赏金", "title": "每日签到领赏金", "reward": 0.5, "verdict": "do", "reason": null, "page_text": "每日签到领赏金 赏金0.50元\n操作步骤：\n1.点签到\n2.截图上传"}

@@ -38,11 +38,11 @@ CORRECT_ABORT_ROW = make_row(
     "必对-调查 赏金1.00元\n操作步骤：\n1.打开问卷链接",
     reason="ETHICS_FAKE_SURVEY",
 )
-# 一条必然判错：步骤没有关键词，守卫会放行，但标注是 UNKNOWN_STEPS。
+# 一条必然判错：步骤没有关键词，守卫会放行，但标注是 NEEDS_THIRD_PARTY_APP。
 WRONG_ROW = make_row(
     "必错-步骤",
-    "必错-步骤 赏金1.50元\n操作步骤：\n1.按页面提示操作",
-    reason="UNKNOWN_STEPS",
+    "必错-步骤 赏金1.50元\n操作步骤：\n1.复制口令",
+    reason="NEEDS_THIRD_PARTY_APP",
 )
 # 一条必然判对的可做样本（DO）。
 CORRECT_DO_ROW = make_row(

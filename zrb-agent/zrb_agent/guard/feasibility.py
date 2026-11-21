@@ -27,6 +27,17 @@ _OPEN_APP_PATTERN = re.compile(
 _BROWSER_WHITELIST = ("浏览器", "链接", "网页", "百度", "搜狗", "必应")
 _MIN_REWARD = 0.30  # 低于三角钱的悬赏不值得执行。
 
+# 不含具体动作的套话：整条步骤只剩这些词，等于没说清要干什么。
+_VAGUE_STEP_MARKERS = ("按页面提示", "按提示", "详见", "待核", "按说明", "见页面", "以页面为准")
+# 套话步骤都很短；10 字的「按提示操作后截图上传」带具体动作，必须放行，所以上限取 9。
+_VAGUE_MAX_LEN = 9
+
+
+def _is_vague(step: str) -> bool:
+    """整条步骤只剩「按页面提示操作」之类套话时返回 True。"""
+    return len(step) <= _VAGUE_MAX_LEN and any(marker in step for marker in _VAGUE_STEP_MARKERS)
+
+
 def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
     """返回 (判定, 中止原因)；判定为 DO 时原因为 None。
 
@@ -52,7 +63,9 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
         if match.group(1) not in _BROWSER_WHITELIST:
             return Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP
     steps = [step.strip() for step in bounty.steps if step.strip()]
-    if not steps or all(step == "待核" for step in steps):
+    # 只要有一条步骤说清了，这单就还能继续做，所以用 all 而不是 any；
+    # 长度上限避免误杀「按提示操作后截图上传」这类带具体动作的步骤。
+    if not steps or all(_is_vague(step) for step in steps):
         return Verdict.ABORT, AbortReason.UNKNOWN_STEPS
     if bounty.reward < _MIN_REWARD:
         return Verdict.ABORT, AbortReason.LOW_REWARD
