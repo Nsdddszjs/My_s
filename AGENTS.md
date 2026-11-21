@@ -25,3 +25,8 @@ diff grows past 200 lines), withdraw auto-merge as the delivery prompt describes
 
 Keep changes minimal and focused on the ticket. Do not add CI workflows, lockfiles or
 dependency updates unless the ticket asks for them.
+
+## Semantics
+
+A reorder/refactor PR must say「语义不变」and include a test for the decision direction;
+`forbidden_regions` containing the device region means reject, never whitelist.

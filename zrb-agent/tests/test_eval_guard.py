@@ -17,7 +17,8 @@ from zrb_agent.schema import AbortReason  # noqa: E402
 SEED_PATH = _ZRB_AGENT_ROOT / "evals" / "feasibility_seed_v2.jsonl"
 
 
-def make_row(ident, page_text, verdict="abort", reason=None, reward=1.0, regions=None):
+def make_row(ident, page_text, verdict="abort", reason=None, reward=1.0,
+             allowed_regions=None, forbidden_regions=None):
     """构造一条内联种子样本。"""
     row = {
         "id": ident,
@@ -27,8 +28,10 @@ def make_row(ident, page_text, verdict="abort", reason=None, reward=1.0, regions
         "reason": reason,
         "page_text": page_text,
     }
-    if regions is not None:
-        row["restricted_regions"] = regions
+    if allowed_regions is not None:
+        row["allowed_regions"] = allowed_regions
+    if forbidden_regions is not None:
+        row["forbidden_regions"] = forbidden_regions
     return row
 
 
@@ -91,17 +94,18 @@ class SeedFileTest(EvalGuardCase):
                 # 唯一允许的例外就是 PURE_IN_APP。
                 self.assertEqual(row["reason"], "PURE_IN_APP", row["id"])
 
-    def test_only_region_samples_carry_restricted_regions(self):
+    def test_only_region_samples_carry_region_fields(self):
         rows = eval_guard.load_seed(SEED_PATH)
-        with_regions = {row["id"]: row["restricted_regions"] for row in rows
-                        if row.get("restricted_regions")}
-        self.assertEqual(set(with_regions), {"P743号调查-泰国", "食品调查2"})
-        self.assertEqual(with_regions["P743号调查-泰国"], ["泰国"])
-
-    def test_build_bounty_passes_restricted_regions(self):
-        for row in eval_guard.load_seed(SEED_PATH):
+        allowed = {row["id"]: row["allowed_regions"] for row in rows if row.get("allowed_regions")}
+        forbidden = {row["id"]: row["forbidden_regions"] for row in rows if row.get("forbidden_regions")}
+        self.assertEqual(set(allowed), {"P743号调查-泰国", "食品调查2"})
+        self.assertEqual(allowed["P743号调查-泰国"], ["泰国"])
+        self.assertEqual(set(forbidden), {"378735G畅享套餐h"})
+        self.assertIn("云南", forbidden["378735G畅享套餐h"])
+        for row in rows:
             bounty = eval_guard.build_bounty(row)
-            self.assertEqual(bounty.restricted_regions, row.get("restricted_regions") or [])
+            self.assertEqual((bounty.allowed_regions, bounty.forbidden_regions),
+                             (row.get("allowed_regions") or [], row.get("forbidden_regions") or []))
 
     def test_build_steps_only_takes_numbered_lines(self):
         # 标题行、报名条件、备注都不算步骤，序号也要剥掉。

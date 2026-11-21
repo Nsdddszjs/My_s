@@ -7,9 +7,14 @@ from zrb_agent.schema import AbortReason, Bounty, Verdict
 
 # 判定顺序按「特异 → 通用」：支付宝/淘宝是明确的 App 信号，扫码类词更通用，
 # 先判特异词，避免「支付宝扫码」被扫码抢先归因为 NEEDS_WECHAT。
-_ALIPAY_TERMS = ("支付宝", "淘宝")
+# 「某宝」「支某宝」「ZFB」是平台为规避审核故意写错字的黑话；词表不可能穷举，
+# 这里只是针对「故意写错字绕过审核」这一已知对抗行为的最小防线。
+_ALIPAY_TERMS = ("支付宝", "淘宝", "某宝", "支某宝", "ZFB", "zfb")
 _THIRD_PARTY_TERMS = ("下载", "注册", "试玩", "安装")
-_WECHAT_TERMS = ("长按识别", "二维码", "扫码")
+_WECHAT_TERMS = (
+    "长按识别", "二维码", "扫码", "扫一扫", "识别二维码",
+    "某信", "薇信", "威信", "WX", "wx", "VX", "vx",
+)
 
 # 第三方 App 名表：平台文案常默认你已装 App，只写「打开 XX」而不写「下载」，
 # 只认安装类动词会漏。命中任一 App 名即判 NEEDS_THIRD_PARTY_APP。
@@ -17,6 +22,8 @@ _THIRD_PARTY_APPS = (
     "得物", "淘宝", "京东", "拼多多", "抖音", "快手", "哔哩哔哩", "支付宝",
     "微信", "小红书", "美团", "起点读书", "番茄", "番茄小说", "高德",
     "百度地图", "夸克", "剪映", "汽水音乐",
+    "联通", "王卡", "微店", "天猫", "滴滴", "麦当劳", "惠康", "手心输入法",
+    "穿越火线", "梦幻西游", "爱加速",
 )
 
 # 平台文案的惯用句式是「打开 XX」，只认动词会漏；捕获组不在浏览器白名单里，
@@ -43,6 +50,7 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
 
     低赏金是性价比结论，不是可行性结论，两者不该抢同一个枚举位：LOW_REWARD
     放在所有其它判定之后，只有没有任何其它中止原因时才作为最后理由返回。
+    ``reward is None`` 是赏金没读到，返回 UNKNOWN_REWARD，不能当 0 元判 LOW_REWARD。
     """
     reason = check_ethics(bounty)
     if reason is not None:
@@ -67,6 +75,8 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
     # 长度上限避免误杀「按提示操作后截图上传」这类带具体动作的步骤。
     if not steps or all(_is_vague(step) for step in steps):
         return Verdict.ABORT, AbortReason.UNKNOWN_STEPS
+    if bounty.reward is None:
+        return Verdict.ABORT, AbortReason.UNKNOWN_REWARD
     if bounty.reward < _MIN_REWARD:
         return Verdict.ABORT, AbortReason.LOW_REWARD
     return Verdict.DO, None
