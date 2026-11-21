@@ -12,6 +12,7 @@
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,8 +25,8 @@ from zrb_agent.guard.feasibility import check_feasibility  # noqa: E402
 from zrb_agent.schema import Bounty, Verdict  # noqa: E402
 
 DEFAULT_SEED = _ZRB_AGENT_ROOT / "evals" / "feasibility_seed_v2.jsonl"
-# 详情页里的步骤表头不是步骤本身，拆行时丢掉。
-_STEP_HEADER = "操作步骤："
+# 只认「1. xxx」这种编号行；标题行、报名条件、备注都不是步骤。
+_STEP_LINE_RE = re.compile(r"^\s*(\d+)\s*[.、]\s*(.+)$")
 _REQUIRED_FIELDS = ("id", "title", "reward", "verdict", "reason", "page_text")
 
 
@@ -51,12 +52,17 @@ def load_seed(path):
 
 
 def build_steps(page_text):
-    """把详情页原文按行拆成步骤，丢掉空行与「操作步骤：」标题行。"""
+    """只取「1. xxx」「1、xxx」这种编号行；标题行、报名条件、备注都不算步骤。
+
+    序号前缀要剥掉：守卫层做的是关键词匹配，序号留在里面不影响判定，但存进
+    数据集会污染以后的训练样本。页面原文怎么切成 steps 和守卫层实现一样容易
+    出错，所以这个口径由 tests/test_eval_guard.py 锁住。
+    """
     steps = []
     for line in page_text.split("\n"):
-        step = line.strip()
-        if step and step != _STEP_HEADER:
-            steps.append(step)
+        match = _STEP_LINE_RE.match(line.strip())
+        if match:
+            steps.append(match.group(2).strip())
     return steps
 
 

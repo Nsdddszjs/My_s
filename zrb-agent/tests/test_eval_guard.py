@@ -32,7 +32,7 @@ def make_row(ident, page_text, verdict="abort", reason=None, reward=1.0, regions
     return row
 
 
-# 一条必然判对（标题含「调查」→ ETHICS_FAKE_SURVEY）。
+# 一条必然判对（步骤含「问卷」→ ETHICS_FAKE_SURVEY）。
 CORRECT_ABORT_ROW = make_row(
     "必对-调查",
     "必对-调查 赏金1.00元\n操作步骤：\n1.打开问卷链接",
@@ -103,9 +103,18 @@ class SeedFileTest(EvalGuardCase):
             bounty = eval_guard.build_bounty(row)
             self.assertEqual(bounty.restricted_regions, row.get("restricted_regions") or [])
 
-    def test_build_steps_drops_blank_and_header_lines(self):
-        steps = eval_guard.build_steps("标题 赏金1.00元\n\n操作步骤：\n1.第一步\n2.第二步")
-        self.assertEqual(steps, ["标题 赏金1.00元", "1.第一步", "2.第二步"])
+    def test_build_steps_only_takes_numbered_lines(self):
+        # 标题行、报名条件、备注都不算步骤，序号也要剥掉。
+        page_text = "标题行 赏金2.50元\n操作步骤：\n1.按页面提示操作"
+        self.assertEqual(eval_guard.build_steps(page_text), ["按页面提示操作"])
+        self.assertEqual(
+            eval_guard.build_steps("1.打开链接\n2.截图上传"),
+            ["打开链接", "截图上传"],
+        )
+        self.assertEqual(
+            eval_guard.build_steps("1、中文顿号也要认"),
+            ["中文顿号也要认"],
+        )
 
 
 class EvaluateTest(EvalGuardCase):
@@ -124,10 +133,10 @@ class EvaluateTest(EvalGuardCase):
         self.assertEqual(eval_guard.exit_code(result), 2)
 
     def test_tiny_seed_exit_code_one_for_reason_mismatch(self):
-        # 判定正确但归因错位：标题含「调查」的样本被标成 UNKNOWN_STEPS。
+        # 判定正确但归因错位：步骤含「问卷」被判成虚假调研，标注却是未知步骤。
         wrong_reason_row = make_row(
-            "必错-归因调查",
-            "必错-归因调查 赏金1.50元\n操作步骤：\n1.按页面提示操作",
+            "必错-归因问卷",
+            "必错-归因问卷 赏金1.50元\n操作步骤：\n1.打开问卷链接",
             reason="UNKNOWN_STEPS",
         )
         result = eval_guard.evaluate([CORRECT_ABORT_ROW, wrong_reason_row])
@@ -135,7 +144,7 @@ class EvaluateTest(EvalGuardCase):
         self.assertEqual(result["false_positive"], [])
         self.assertEqual(result["false_negative"], [])
         self.assertEqual(result["mismatch"], [{
-            "id": "必错-归因调查",
+            "id": "必错-归因问卷",
             "expected": "UNKNOWN_STEPS",
             "actual": "ETHICS_FAKE_SURVEY",
         }])
