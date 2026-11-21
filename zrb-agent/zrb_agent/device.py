@@ -3,8 +3,6 @@
 这一层是“手”：只负责把结构化命令翻译成 adb 调用，不含业务判断，也不做模型调用。
 """
 
-import base64
-import re
 import subprocess
 import time
 
@@ -15,6 +13,19 @@ def denormalize(x_norm: float, y_norm: float, width: int, height: int) -> tuple[
     所有落库坐标都是 0~1，归一化换算在别的模块完成，这里只负责还原。
     """
     return round(x_norm * width), round(y_norm * height)
+
+
+def _png_size(path: str) -> tuple[int, int]:
+    """读取 PNG 文件 IHDR 里的宽高，避免引入图像库依赖。
+
+    PNG 头固定为 8 字节签名 + 4 字节块长度 + 4 字节块类型 IHDR，
+    随后 4 字节宽、4 字节高，均为大端序。
+    """
+    with open(path, "rb") as handle:
+        head = handle.read(24)
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        raise ValueError(f"不是 PNG 文件：{path!r}")
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
 
 
 class Device:
@@ -52,17 +63,20 @@ class Device:
         return self.keyevent(4)
 
     def input_text(self, text: str) -> str:
-        """输入文本。
+        """输入 ASCII 文本；空格写成 %s，非 ASCII 输入显式拒绝。
 
-        纯 ASCII 直接走 input text；中文等非 ASCII 字符先转 UTF-8 再 base64，
-        由设备端解码后交给 input text，避免 shell 编码问题。
+        `input text` 里字面空格会被截断，必须写成 `%s`。
+        非 ASCII（中文、全角字符、emoji 等）在 Android 14 的
+        InputShellCommand.sendText() 里会因 keymap 查不到字符返回 null 并 NPE，
+        任何管道/脚本绕过都无效；与其静默失败，这里明确抛错，
+        让调用方改用 ask_human 交由人处理。
         """
-        if text.isascii():
-            return self._run(["shell", "input", "text", text])
-        encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        return self._run(
-            ["shell", "echo", encoded, "|", "base64", "-d", "|", "input", "text"]
-        )
+        if not text.isascii():
+            raise ValueError(
+                f"input_text 只支持 ASCII，收到非 ASCII 输入：{text!r}。"
+                "需要中文等非 ASCII 输入请改用 ask_human。"
+            )
+        return self._run(["shell", "input", "text", text.replace(" ", "%s")])
 
     def screencap(self, local_path: str, remote_path: str = "/sdcard/_shot.png") -> str:
         """截图并拉回本地。"""
@@ -104,13 +118,18 @@ class Device:
             ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
         )
 
-    def screen_size(self) -> tuple[int, int]:
-        """读取屏幕分辨率，解析 wm size 的 Physical size（兼容 Override size）。"""
-        output = self._run(["shell", "wm", "size"])
-        match = re.search(r"(?:Physical|Override) size:\s*(\d+)x(\d+)", output)
-        if not match:
-            raise ValueError(f"无法解析屏幕尺寸：{output!r}")
-        return int(match.group(1)), int(match.group(2))
+    def screen_size(
+        self, probe_path: str = "/sdcard/_probe.png", local_path: str = "_probe.png"
+    ) -> tuple[int, int]:
+        """读取当前屏幕像素尺寸（与 UI 树、截图同一坐标系）。
+
+        不能用 `adb shell wm size`：它报的是面板物理方向（例如横屏 1920x1080），
+        而 uiautomator 的 bounds 和截图都是旋转后的方向（例如竖屏 1080x1920）。
+        这里截一张图、读 PNG 头里的真实像素宽高，三者只在同一坐标系下一致。
+        """
+        self._run(["shell", "screencap", "-p", probe_path])
+        self._run(["pull", probe_path, local_path])
+        return _png_size(local_path)
 
     def current_focus(self) -> str:
         """返回 dumpsys window 中 mCurrentFocus= 所在的那一行。"""
