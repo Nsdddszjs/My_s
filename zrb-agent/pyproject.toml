@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zrb-agent"
+version = "0.1.0"
+description = "视觉驱动的 Android 众包悬赏执行 Agent 骨架（M0 仅守卫层纯逻辑）"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["zrb_agent", "zrb_agent.guard"]
