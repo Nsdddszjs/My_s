@@ -8,7 +8,7 @@ import inspect, os, sys, tempfile, unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zrb_agent import device as device_module
-from zrb_agent.guard.feasibility import check_feasibility
+from zrb_agent.guard.feasibility import check_feasibility, primary_reason
 from zrb_agent.perceive import build_page_state, classify_detail_page
 from zrb_agent.schema import AbortReason, Bounty, Verdict
 
@@ -54,7 +54,8 @@ def classify(xml_text: str, activity: str = ".DetailActivity") -> dict:
 
 def run_pipeline(xml_text: str, activity: str = ".DetailActivity"):
     """把原始 UI dump 走完 perceive → guard，返回 (Verdict, AbortReason | None)。"""
-    return check_feasibility(to_bounty(xml_text, activity))
+    verdict, reasons = check_feasibility(to_bounty(xml_text, activity))
+    return verdict, primary_reason(reasons)
 
 
 def to_bounty(xml_text: str, activity: str = ".DetailActivity") -> Bounty:
@@ -122,8 +123,9 @@ class PerceiveToGuardTest(unittest.TestCase):
         bounty = Bounty(id="fixture", title=detail["title"],
                         reward=detail["reward"],
                         steps=[step["text"] for step in detail["steps"]])
-        self.assertEqual(check_feasibility(bounty),
-                         (Verdict.ABORT, AbortReason.UNKNOWN_REGIONS))
+        verdict, reasons = check_feasibility(bounty)
+        self.assertEqual(verdict, Verdict.ABORT)
+        self.assertIn(AbortReason.UNKNOWN_REGIONS, reasons)
 
 
 class CoordinateSpaceTest(unittest.TestCase):
