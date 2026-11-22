@@ -121,6 +121,14 @@ class SeedFileTest(EvalGuardCase):
             ["中文顿号也要认"],
         )
 
+    def test_build_bounty_passes_steps_incomplete(self):
+        # 预览样本可在 JSONL 里标注 steps_incomplete，评测口径与守卫层一致。
+        preview_row = make_row("预览", "1.截图上传", verdict="do")
+        preview_row["steps_incomplete"] = True
+        self.assertTrue(eval_guard.build_bounty(preview_row).steps_incomplete)
+        self.assertFalse(eval_guard.build_bounty(
+            make_row("详情", "1.截图上传", verdict="do")).steps_incomplete)
+
 
 class EvaluateTest(EvalGuardCase):
     def test_tiny_seed_stats_and_false_positive_exit_code(self):

@@ -80,11 +80,23 @@ def _is_vague(step: str) -> bool:
 
 
 def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
-    """返回 (判定, 中止原因)；判定为 DO 时原因为 None。
+    """返回 (判定, 中止原因)；判定为 DO 或 DEFERRED 时原因为 None。
 
     低赏金是性价比结论，不是可行性结论，两者不该抢同一个枚举位：LOW_REWARD
     放在所有其它判定之后，只有没有任何其它中止原因时才作为最后理由返回。
     ``reward is None`` 是赏金没读到，返回 UNKNOWN_REWARD，不能当 0 元判 LOW_REWARD。
+
+    两阶段判定：``bounty.steps_incomplete=True`` 表示步骤来自大厅列表预览，可能
+    只给了第 1 步。此时有效步骤不足 2 条就不下可行性结论（不再判 DO 或
+    UNKNOWN_STEPS），返回 ``Verdict.DEFERRED``，由调用方报名后用完整步骤复判。
+    优先级说明：
+
+    - 伦理/地区红牌照常先判：它们来自结构化字段（或明确文本），不会被步骤变多改写；
+    - 微信/支付宝/登录/第三方 App 等关键词命中照常中止：预览里的步骤是完整步骤的
+      子集，加步骤只会增加命中，不会让已出现的门槛消失；
+    - UNKNOWN_REWARD / LOW_REWARD 照常返回：赏金是列表页字段事实，与步骤完整性无关；
+    - 只有当「步骤未知」或「本应判 DO」这两个依赖步骤完整性的结论出现时，才改为
+      DEFERRED。这样 ``steps_incomplete=False`` 的所有既有路径保持原样。
     """
     reason = check_ethics(bounty)
     if reason is not None:
@@ -117,12 +129,19 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
         if match.group(1) not in _BROWSER_WHITELIST:
             return Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP
     steps = [step.strip() for step in bounty.steps if step.strip()]
+    # 大厅预览只给 1 步时，步骤越少不一定越糟：报名后的完整步骤可能补上说清的动作。
+    preview_incomplete = bounty.steps_incomplete and len(steps) <= 1
     # 只要有一条步骤说清了，这单就还能继续做，所以用 all 而不是 any；
     # 长度上限避免误杀「按提示操作后截图上传」这类带具体动作的步骤。
     if not steps or all(_is_vague(step) for step in steps):
+        if preview_incomplete:
+            return Verdict.DEFERRED, None
         return Verdict.ABORT, AbortReason.UNKNOWN_STEPS
     if bounty.reward is None:
         return Verdict.ABORT, AbortReason.UNKNOWN_REWARD
     if bounty.reward < _MIN_REWARD:
         return Verdict.ABORT, AbortReason.LOW_REWARD
+    if preview_incomplete:
+        # 预览步骤不足以支撑 DO：先报名，拿到完整步骤后再走一次判定。
+        return Verdict.DEFERRED, None
     return Verdict.DO, None

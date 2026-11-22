@@ -79,6 +79,7 @@ def build_bounty(row):
         allowed_regions=None if allowed is None else list(allowed),
         forbidden_regions=None if forbidden is None else list(forbidden),
         type=row.get("type"), limite=row.get("limite"),
+        steps_incomplete=bool(row.get("steps_incomplete", False)),
     )
 
 
