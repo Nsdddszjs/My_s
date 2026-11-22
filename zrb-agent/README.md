@@ -18,6 +18,10 @@
 ## 可做率与交付索引
 
 「可做率」是判定规则与环境配置的函数，不是平台常量；历史「64 条全部判为不可做」是特定环境下的结论，不能当平台结论。分层说明、动作参数与已合并 PR 清单见根目录 `README-交付索引.md`。
+## 感知层
+
+- `classify_detail_page(page)` 按真机 `resource-id` 抽取详情页：`title`（mission_groupname + mission_title）、`reward`、`detail`、`limite`、`steps`（setpcount 序号配对 step_detail，每步含 `index`/`text`/`type`，type=cap 需要截图/nocap 不需要）、`has_text_input`/`text_input_hint`、`primary_button`、`link_button`。
+- 地区输出 `allowed_regions_hint` / `forbidden_regions_hint`：`None` 表示没读到（未知），`[]` 表示限制字段已读且确定无该方向名单，两者不能互相代偿；接线到 `Bounty` 时 `None` 必须保留，不能降级成空名单。
 
 测试：`cd zrb-agent && python -m unittest discover -s tests`
 
