@@ -74,7 +74,9 @@ class Device:
         if not text.isascii():
             raise ValueError(
                 f"input_text 只支持 ASCII，收到非 ASCII 输入：{text!r}。"
-                "需要中文等非 ASCII 输入请改用 ask_human。"
+                "原因：Android 14 的 `input text` 对非 ASCII 字符查不到 keymap，"
+                "命令内部返回 null 并触发 NPE；base64、IME 广播等旁路未经真机验证，"
+                "同样是死路。需要中文等非 ASCII 输入请改用 ask_human。"
             )
         return self._run(["shell", "input", "text", text.replace(" ", "%s")])
 
