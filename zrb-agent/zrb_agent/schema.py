@@ -3,6 +3,46 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
 
+@dataclass
+class Step:
+    """一步悬赏任务：原文 + 三个执行属性。
+
+    #68 的 ``perceive.extract_steps()`` 已按 resource-id 产出 ``type``：
+    ``step_detail_cap`` 需要提交截图证据，``step_detail_nocap`` 不需要。
+    ``nocap`` 只表示不交截图，**不等于可跳过**；行内挂着 ``step_txt`` 时仍必须
+    填入 ``input_hint``。把这两个约定显式放进结构，中间层就不会把类型丢掉。
+    """
+
+    text: str
+    needs_capture: bool = False
+    has_text_input: bool = False
+    input_hint: str | None = None
+
+    @classmethod
+    def from_value(cls, value: object) -> "Step":
+        """把字符串（旧数据）、perceive 的步骤 dict 或 Step 统一还原为 Step。
+
+        dict 支持 ``text`` / ``type``（``cap`` 需截图、``nocap`` 不需要）以及可选的
+        ``needs_capture`` / ``has_text_input`` / ``input_hint``；显式
+        ``needs_capture`` 优先于 ``type``。
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return cls(value)
+        if isinstance(value, dict):
+            needs_capture = (bool(value["needs_capture"])
+                             if "needs_capture" in value
+                             else value.get("type") == "cap")
+            return cls(str(value["text"]), needs_capture,
+                       bool(value.get("has_text_input", False)),
+                       value.get("input_hint"))
+        raise TypeError(f"无法把 {type(value).__name__} 还原为 Step")
+
+    def __str__(self) -> str:
+        """当字符串使用时退回原文，兼容仍把步骤传给 planner 的调用方。"""
+        return self.text
+
 class Verdict(Enum):
     DO = "DO"
     ABORT = "ABORT"
@@ -78,12 +118,16 @@ class Bounty:
     ``steps_incomplete=True`` 表示 ``steps`` 抓取自大厅列表预览，可能只给出了第 1 步，
     不代表完整任务；守卫层据此不下可行性结论，要求报名后带完整步骤复判。默认
     ``False`` 表示步骤来自详情页或已知完整。
+
+    ``steps`` 是 :class:`Step` 列表：字符串、perceive 的步骤 dict 与 ``Step`` 都能
+    在构造时统一还原，纯字符串按 ``needs_capture=False`` 处理；只关心原文的调用方
+    （守卫层）用 :attr:`step_texts`，不要 ``" ".join(bounty.steps)``。
     """
 
     id: str
     title: str
     reward: float | None
-    steps: list[str]
+    steps: list[Step]
     allowed_regions: list[str] | None = None
     forbidden_regions: list[str] | None = None
     type: str | None = None
@@ -92,12 +136,18 @@ class Bounty:
     steps_incomplete: bool = False
 
     def __post_init__(self) -> None:
-        """两个地区字段语义相反，同时非空说明调用方把两种名单混在了一起。"""
+        """地区字段语义相反；同时把步骤统一还原为 :class:`Step`。"""
         if self.allowed_regions and self.forbidden_regions:
             raise ValueError("allowed_regions 与 forbidden_regions 不能同时设置")
+        self.steps = [Step.from_value(step) for step in self.steps]
+
+    @property
+    def step_texts(self) -> list[str]:
+        """步骤原文列表；只关心文本的守卫层与旧调用方用它。"""
+        return [step.text for step in self.steps]
 
     def to_dict(self) -> dict:
-        """转换为可 JSON 序列化的字典（``None`` 原样保留）。"""
+        """转换为可 JSON 序列化的字典（步骤序列化为 ``Step`` 字典）。"""
         return asdict(self)
 
     @classmethod
@@ -107,6 +157,8 @@ class Bounty:
         地区字段缺失按「已知为空」处理，显式 ``null`` 才表示「没读到」；
         ``type`` / ``limite`` 没有历史默认值，缺失与 ``null`` 都按「没读到」处理。
         ``steps_incomplete`` 缺失按 ``False`` 处理（旧数据默认步骤完整）。
+        ``steps`` 同时接受旧字符串、perceive 的步骤 dict 与 ``Step`` 字典，统一由
+        :meth:`Step.from_value` 还原。
         """
         reward = data.get("reward")
         allowed = data.get("allowed_regions", data.get("restricted_regions", []))
