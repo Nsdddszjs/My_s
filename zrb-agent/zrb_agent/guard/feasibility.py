@@ -60,6 +60,18 @@ _AUDIENCE_TERMS = (
     "每个手机号一次", "一个手机号一次", "勿多账号", "仅限新玩家",
 )
 
+# 完成动作词：标题/类型/报名条件点名了「装完之后还要做什么」，但步骤只写到下载安装。
+# 悬赏主按标题验收，planner 按步骤执行完就停手，会「做完了却拿不到赏金」且
+# 不报错。这里只把标题/类型里出现、步骤里缺席的动作显式标出来，至少不静默放行。
+_COMPLETION_ACTION_TERMS = ("试玩", "助力", "答题", "看视频", "进群")
+
+
+def _completion_text(bounty: Bounty) -> str:
+    """完成条件来源：标题、类型与报名条件（步骤原文用于对照，不参与拼装）。"""
+    return " ".join(
+        part for part in (bounty.title, bounty.type, bounty.limite) if part
+    )
+
 
 def _login_text(bounty: Bounty) -> str:
     """把可能暴露登录态的三个来源拼成一段文本：type、limite 与步骤。"""
@@ -102,6 +114,9 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
     - 伦理/地区红牌照常先判：它们来自结构化字段（或明确文本），不会被步骤变多改写；
     - 微信/支付宝/登录/第三方 App 等关键词命中照常中止：预览里的步骤是完整步骤的
       子集，加步骤只会增加命中，不会让已出现的门槛消失。命中多族时全部保留；
+    - 完成条件词（试玩/助力/答题/看视频/进群）只在标题/类型/报名条件里出现、步骤里
+      没有对应动作时，追加 COMPLETION_UNSPECIFIED：按步骤做完不等于达标，不能静默放行。
+      该门依赖「步骤里缺什么」，预览步骤不完整时不判，留给完整步骤复判；
     - UNKNOWN_REWARD / LOW_REWARD 照常返回：赏金是列表页字段事实，与步骤完整性无关；
     - 只要列表里已经有阻断，就返回 ABORT，不再因为预览不完整降级为 DEFERRED；
     - 只有当「步骤未知」或「本应判 DO」这两个依赖步骤完整性的结论出现时，才改为
@@ -139,6 +154,21 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
         )
     ):
         reasons.append(AbortReason.NEEDS_THIRD_PARTY_APP)
+
+    # 第二段门槛：装得上 ≠ 装完即完成。标题/类型里点名了完成动作、步骤里却没有
+    # 对应动作时，planner 按步骤执行到末尾会静默漏做；这里显式标出完成条件缺失。
+    # 这个门看「步骤里缺什么」，不是「步骤里有什么」：大厅预览可能只给了第 1 步，
+    # 缺动作可能只是截断，所以步骤不完整时不下结论，等报名后的完整步骤复判。
+    completion_text = _completion_text(bounty)
+    if (
+        text.strip()
+        and not bounty.steps_incomplete
+        and any(
+            term in completion_text and term not in text
+            for term in _COMPLETION_ACTION_TERMS
+        )
+    ):
+        reasons.append(AbortReason.COMPLETION_UNSPECIFIED)
 
     # 已有明确阻断就不 DEFERRED：预览步骤是完整步骤子集，补全只会增加命中。
     if reasons:

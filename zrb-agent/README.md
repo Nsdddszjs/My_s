@@ -5,7 +5,8 @@
 ## 守卫层
 
 - `check_ethics(bounty)`：按「禁止地区 / 允许地区 → 改 IP → 伪造身份 → 虚假调研 → 地区未知」的优先级返回 `AbortReason`。`forbidden_regions` 是黑名单（含本机地区即拒），`allowed_regions` 是白名单（非空且不含本机地区即拒）。
-- `check_feasibility(bounty)`：先过伦理守卫，再按旧优先级收集微信/支付宝/扫码/登录态/第三方 App 等全部门槛，返回 `(Verdict, list[AbortReason])`；`DO` / `DEFERRED` 返回空列表，多道门同时命中时全部保留，不再静默丢弃其余原因。`primary_reason(reasons)` 是兼容层，取列表首个（即旧版单值口径）。`AbortReason.kind` 把原因归为 `ENVIRONMENT` / `PLATFORM` / `RED_LINE` / `DATA` / `ECONOMIC`，上层可按组生成行动清单。
+- `check_feasibility(bounty)`：先过伦理守卫，再按旧优先级收集微信/支付宝/扫码/登录态/第三方 App/完成条件等全部门槛，返回 `(Verdict, list[AbortReason])`；`DO` / `DEFERRED` 返回空列表，多道门同时命中时全部保留，不再静默丢弃其余原因。`primary_reason(reasons)` 是兼容层，取列表首个（即旧版单值口径）。`AbortReason.kind` 把原因归为 `ENVIRONMENT` / `PLATFORM` / `RED_LINE` / `DATA` / `ECONOMIC`，上层可按组生成行动清单。
+- 两段门槛（`COMPLETION_UNSPECIFIED`）：标题/类型/报名条件里点名了 `试玩` / `助力` / `答题` / `看视频` / `进群` 等完成动作，而步骤里没有对应动作时，追加该原因。下载安装类悬赏「装得上」不等于「装完即完成」；只按步骤执行到末尾会静默漏做、做完也拿不到赏金，所以必须在执行前显式标出「完成条件未在步骤中说明」。
 - 两阶段判定：`Bounty.steps_incomplete=True` 表示 `steps` 抓取自大厅列表预览（可能只给了第 1 步）。有效步骤 ≤1 时不再判 `DO` 或 `UNKNOWN_STEPS`，而是返回 `Verdict.DEFERRED`；伦理/地区红牌、微信/支付宝/登录/第三方 App 门槛和赏金结论（`UNKNOWN_REWARD`/`LOW_REWARD`）仍按原优先级先判。只要原因列表非空就返回 `ABORT`，不因预览不完整降级为 `DEFERRED`。`steps_incomplete` 默认 `False`，即旧行为完全不变。
 - 登录态（`NEEDS_LOGIN`）三个来源：显式词（`账号`/`登录`/`手机号注册`/`绑定手机`）、隐性动作（`助力`/`关注`/`点赞`/`搜索`/`签到`/`打卡` 等只有账号才能追溯的动作）、人群限定（`新用户`/`老用户`/`回归`/`每个手机号一次`/`勿多账号` 等账号状态词，来自 `Bounty.type` / `Bounty.limite` 或步骤原文）。下载类步骤同时命中第三方 App 时，登录态优先归因——它比「装得上」更根本。
 - `None` 语义：`reward`、`allowed_regions`、`forbidden_regions` 的 `None` 表示「没读到」，不是 0 元或空名单。地区未知返回 `UNKNOWN_REGIONS`，赏金未知返回 `UNKNOWN_REWARD`，都不许按「无限制」或「低赏金」处理；空列表才表示页面明确没有该项限制。已废弃的 `restricted_regions` 在 `from_dict` 中按 `allowed_regions` 兼容，两个地区字段同时非空是数据错误（`ValueError`）。

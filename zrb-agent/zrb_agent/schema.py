@@ -21,6 +21,9 @@ class AbortReason(Enum):
     # 任务动作需要登录态（账号/手机号/短信验证码）才能完成。
     NEEDS_LOGIN = "NEEDS_LOGIN"
     NEEDS_THIRD_PARTY_APP = "NEEDS_THIRD_PARTY_APP"
+    # 标题/类型点名了完成动作（试玩、助力、答题等），步骤里却没有对应动作：
+    # 装完或按步骤做完不等于达标，属于「完成条件未在步骤中说明」。
+    COMPLETION_UNSPECIFIED = "COMPLETION_UNSPECIFIED"
     UNKNOWN_REWARD = "UNKNOWN_REWARD"
     LOW_REWARD = "LOW_REWARD"
     UNKNOWN_STEPS = "UNKNOWN_STEPS"
@@ -51,6 +54,7 @@ _REASON_KINDS = {
     AbortReason.NEEDS_SCANNER: ReasonKind.ENVIRONMENT,
     AbortReason.NEEDS_LOGIN: ReasonKind.ENVIRONMENT,
     AbortReason.NEEDS_THIRD_PARTY_APP: ReasonKind.ENVIRONMENT,
+    AbortReason.COMPLETION_UNSPECIFIED: ReasonKind.DATA,
     AbortReason.UNKNOWN_REGIONS: ReasonKind.DATA,
     AbortReason.UNKNOWN_REWARD: ReasonKind.DATA,
     AbortReason.UNKNOWN_STEPS: ReasonKind.DATA,
