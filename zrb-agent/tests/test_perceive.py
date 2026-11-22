@@ -122,5 +122,50 @@ class SubmitSuccessTest(unittest.TestCase):
             has_approved_entry(build_page_state(APPROVED_XML, ".Mine"), " ")
 
 
+class ContentDescPerceiveTest(unittest.TestCase):
+    """验证 parse_ui_xml 对 content-desc 节点的提取与查询能力 (#70)。"""
+
+    PRIVACY_DIALOG_XML = """<hierarchy>
+      <node bounds="[0,0][1080,1920]" class="android.widget.FrameLayout" text="" resource-id="">
+        <node bounds="[115,441][276,603]" class="android.view.View" text="" content-desc="个人信息保护指引 " resource-id="" />
+        <node bounds="[115,1383][1325,1516]" class="android.view.View" text="" content-desc="同意" clickable="true" resource-id="" />
+        <node bounds="[115,1550][1325,1680]" class="android.view.View" text="" content-desc="不同意" clickable="true" resource-id="" />
+      </node>
+    </hierarchy>"""
+
+    LOGIN_WALL_XML = """<hierarchy>
+      <node bounds="[0,0][1080,1920]" class="android.widget.FrameLayout" text="" resource-id="">
+        <node bounds="[50,100][1030,200]" class="android.view.View" text="" content-desc="手机号一键登录" resource-id="" />
+        <node bounds="[50,250][1030,350]" class="android.view.View" text="" content-desc="发送验证码" clickable="true" resource-id="" />
+        <node bounds="[50,400][1030,500]" class="android.view.View" text="其他登录方式" content-desc="" resource-id="tv_other" />
+      </node>
+    </hierarchy>"""
+
+    def test_privacy_dialog_content_desc_elements(self) -> None:
+        elements = parse_ui_xml(self.PRIVACY_DIALOG_XML)
+        self.assertEqual(len(elements), 3)
+        self.assertEqual(elements[0].desc, "个人信息保护指引 ")
+        self.assertEqual(elements[1].text, "同意")
+        self.assertEqual(elements[1].desc, "同意")
+        self.assertEqual(elements[2].text, "不同意")
+        self.assertEqual(elements[2].desc, "不同意")
+
+    def test_tap_target_content_desc(self) -> None:
+        elements = parse_ui_xml(self.PRIVACY_DIALOG_XML)
+        target = tap_target(elements, text="同意")
+        self.assertEqual(target, (720, 1449))
+
+    def test_page_state_texts_includes_desc(self) -> None:
+        state = build_page_state(self.LOGIN_WALL_XML, ".LoginActivity")
+        self.assertIn("手机号一键登录", state.texts)
+        self.assertIn("发送验证码", state.texts)
+        self.assertIn("其他登录方式", state.texts)
+
+    def test_find_elements_by_desc_and_contains(self) -> None:
+        elements = parse_ui_xml(self.LOGIN_WALL_XML)
+        self.assertEqual(len(find_elements(elements, contains="验证码")), 1)
+        self.assertEqual(find_elements(elements, text="发送验证码")[0].desc, "发送验证码")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,7 @@ class UiElement:
     resource_id: str
     bounds: tuple[int, int, int, int]
     center: tuple[int, int]
+    desc: str = ""
 
     def norm_center(self, width: int, height: int) -> tuple[float, float]:
         """把像素中心点归一化到 [0,1]。"""
@@ -50,18 +51,24 @@ class PageState:
 
 
 def parse_ui_xml(xml_text: str) -> list[UiElement]:
-    """解析 XML，仅保留有 text 或 resource-id 的节点，ref 按保留顺序编号。"""
+    """解析 XML，仅保留有 text、content-desc 或 resource-id 的节点，ref 按保留顺序编号。"""
     elements: list[UiElement] = []
     for node in ET.fromstring(xml_text).iter("node"):
         text = node.get("text", "") or ""
+        desc = node.get("content-desc", "") or ""
         resource_id = node.get("resource-id", "") or ""
         bounds = _BOUNDS_RE.search(node.get("bounds", "") or "")
-        if (not text and not resource_id) or bounds is None:
+        label = text or desc
+        if (not label and not resource_id) or bounds is None:
             continue  # 纯布局容器或无法点击的节点丢弃
         x1, y1, x2, y2 = (int(v) for v in bounds.groups())
         elements.append(UiElement(
-            ref=f"e{len(elements)}", text=text, resource_id=resource_id,
-            bounds=(x1, y1, x2, y2), center=((x1 + x2) // 2, (y1 + y2) // 2),
+            ref=f"e{len(elements)}",
+            text=html.unescape(label),
+            resource_id=resource_id,
+            bounds=(x1, y1, x2, y2),
+            center=((x1 + x2) // 2, (y1 + y2) // 2),
+            desc=html.unescape(desc),
         ))
     return elements
 
@@ -70,21 +77,26 @@ def build_page_state(xml_text: str, activity: str,
                      screenshot_path: str | None = None) -> PageState:
     """组合 XML、activity 与截图路径；文本统一做一次 HTML 实体反转义。"""
     elements = parse_ui_xml(xml_text)
-    texts = [html.unescape(el.text) for el in elements if el.text]
+    texts: list[str] = []
+    for el in elements:
+        if el.text and el.text not in texts:
+            texts.append(el.text)
+        if el.desc and el.desc not in texts:
+            texts.append(el.desc)
     return PageState(activity, elements, texts, screenshot_path)
 
 
 def find_elements(elements: list[UiElement], *, text: str | None = None,
                   resource_id: str | None = None,
                   contains: str | None = None) -> list[UiElement]:
-    """按精确 text、精确 resource-id 或 text 子串查找（多条件取交集）。"""
+    """按精确 text/desc、精确 resource-id 或 text/desc 子串查找（多条件取交集）。"""
     hits: list[UiElement] = []
     for el in elements:
-        if text is not None and el.text != text:
+        if text is not None and el.text != text and el.desc != text:
             continue
         if resource_id is not None and el.resource_id != resource_id:
             continue
-        if contains is not None and contains not in el.text:
+        if contains is not None and (contains not in el.text and contains not in el.desc):
             continue
         hits.append(el)
     return hits
