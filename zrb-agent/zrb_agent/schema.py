@@ -25,6 +25,38 @@ class AbortReason(Enum):
     LOW_REWARD = "LOW_REWARD"
     UNKNOWN_STEPS = "UNKNOWN_STEPS"
 
+    @property
+    def kind(self) -> "ReasonKind":
+        """返回「谁能解开这道门」，用于把多个原因折叠成行动分组。"""
+        return _REASON_KINDS[self]
+
+
+class ReasonKind(Enum):
+    """阻断归因分组：环境缺件 / 平台硬门槛 / 红线 / 数据不足 / 性价比结论。"""
+
+    ENVIRONMENT = "ENVIRONMENT"
+    PLATFORM = "PLATFORM"
+    RED_LINE = "RED_LINE"
+    DATA = "DATA"
+    ECONOMIC = "ECONOMIC"
+
+
+_REASON_KINDS = {
+    AbortReason.ETHICS_FABRICATED_IDENTITY: ReasonKind.RED_LINE,
+    AbortReason.ETHICS_FAKE_SURVEY: ReasonKind.RED_LINE,
+    AbortReason.REGION_REJECTED: ReasonKind.RED_LINE,
+    AbortReason.REQUIRES_VPN: ReasonKind.RED_LINE,
+    AbortReason.NEEDS_WECHAT: ReasonKind.PLATFORM,
+    AbortReason.NEEDS_ALIPAY: ReasonKind.PLATFORM,
+    AbortReason.NEEDS_SCANNER: ReasonKind.ENVIRONMENT,
+    AbortReason.NEEDS_LOGIN: ReasonKind.ENVIRONMENT,
+    AbortReason.NEEDS_THIRD_PARTY_APP: ReasonKind.ENVIRONMENT,
+    AbortReason.UNKNOWN_REGIONS: ReasonKind.DATA,
+    AbortReason.UNKNOWN_REWARD: ReasonKind.DATA,
+    AbortReason.UNKNOWN_STEPS: ReasonKind.DATA,
+    AbortReason.LOW_REWARD: ReasonKind.ECONOMIC,
+}
+
 @dataclass
 class Bounty:
     """一条众包悬赏任务。

@@ -79,8 +79,16 @@ def _is_vague(step: str) -> bool:
     return len(step) <= _VAGUE_MAX_LEN and any(marker in step for marker in _VAGUE_STEP_MARKERS)
 
 
-def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
-    """返回 (判定, 中止原因)；判定为 DO 或 DEFERRED 时原因为 None。
+def primary_reason(reasons: list[AbortReason]) -> AbortReason | None:
+    """兼容层：取原因列表首个，等价于改造前的单值返回；DO / DEFERRED 返回 ``None``。"""
+    return reasons[0] if reasons else None
+
+
+def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
+    """返回 (判定, 全部中止原因)；判定为 DO 或 DEFERRED 时原因为空列表。
+
+    真机上一条悬赏常同时卡在多道门上，旧版只返回首个会静默丢弃其余阻断；这里按
+    旧版优先级全部收集，列表首个仍是旧版返回值（``primary_reason`` 兼容层）。
 
     低赏金是性价比结论，不是可行性结论，两者不该抢同一个枚举位：LOW_REWARD
     放在所有其它判定之后，只有没有任何其它中止原因时才作为最后理由返回。
@@ -93,41 +101,49 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
 
     - 伦理/地区红牌照常先判：它们来自结构化字段（或明确文本），不会被步骤变多改写；
     - 微信/支付宝/登录/第三方 App 等关键词命中照常中止：预览里的步骤是完整步骤的
-      子集，加步骤只会增加命中，不会让已出现的门槛消失；
+      子集，加步骤只会增加命中，不会让已出现的门槛消失。命中多族时全部保留；
     - UNKNOWN_REWARD / LOW_REWARD 照常返回：赏金是列表页字段事实，与步骤完整性无关；
+    - 只要列表里已经有阻断，就返回 ABORT，不再因为预览不完整降级为 DEFERRED；
     - 只有当「步骤未知」或「本应判 DO」这两个依赖步骤完整性的结论出现时，才改为
       DEFERRED。这样 ``steps_incomplete=False`` 的所有既有路径保持原样。
     """
+    reasons: list[AbortReason] = []
+
+    # 保持旧版优先级顺序，所以列表首个永远等于旧版的返回值。
     reason = check_ethics(bounty)
     if reason is not None:
-        return Verdict.ABORT, reason
+        reasons.append(reason)
 
     text = " ".join(bounty.steps)
     if any(term in text for term in _ALIPAY_TERMS):
-        return Verdict.ABORT, AbortReason.NEEDS_ALIPAY
+        reasons.append(AbortReason.NEEDS_ALIPAY)
     if "保存图片" in text:
-        return Verdict.ABORT, AbortReason.NEEDS_SCANNER
+        reasons.append(AbortReason.NEEDS_SCANNER)
     if any(term in text for term in _WECHAT_TERMS):
-        return Verdict.ABORT, AbortReason.NEEDS_WECHAT
+        reasons.append(AbortReason.NEEDS_WECHAT)
     # 登录态判定必须排在第三方 App 之前：下载类步骤几乎都会命中「下载/安装」，
     # 若先判 App，会把「下载后凭新用户身份做任务」错误归因为 App 门槛。
     login_text = _login_text(bounty)
-    if any(term in login_text for term in _LOGIN_EXPLICIT_TERMS):
-        return Verdict.ABORT, AbortReason.NEEDS_LOGIN
-    if any(term in login_text for term in _AUDIENCE_TERMS):
-        # 人群限定隐含账号：平台要能查到账号状态，就必须先注册登录。
-        # #32 后续实测明确人群限定词本身就是登录要求，所以这里直接 abort，
-        # 不像早期草案那样只作附注。
-        return Verdict.ABORT, AbortReason.NEEDS_LOGIN
-    if any(term in login_text for term in _LOGIN_ACTION_TERMS):
-        return Verdict.ABORT, AbortReason.NEEDS_LOGIN
-    if any(term in text for term in _THIRD_PARTY_TERMS):
-        return Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP
-    if any(app in text for app in _THIRD_PARTY_APPS):
-        return Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP
-    for match in _OPEN_APP_PATTERN.finditer(text):
-        if match.group(1) not in _BROWSER_WHITELIST:
-            return Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP
+    if (
+        any(term in login_text for term in _LOGIN_EXPLICIT_TERMS)
+        or any(term in login_text for term in _AUDIENCE_TERMS)
+        or any(term in login_text for term in _LOGIN_ACTION_TERMS)
+    ):
+        reasons.append(AbortReason.NEEDS_LOGIN)
+    if (
+        any(term in text for term in _THIRD_PARTY_TERMS)
+        or any(app in text for app in _THIRD_PARTY_APPS)
+        or any(
+            match.group(1) not in _BROWSER_WHITELIST
+            for match in _OPEN_APP_PATTERN.finditer(text)
+        )
+    ):
+        reasons.append(AbortReason.NEEDS_THIRD_PARTY_APP)
+
+    # 已有明确阻断就不 DEFERRED：预览步骤是完整步骤子集，补全只会增加命中。
+    if reasons:
+        return Verdict.ABORT, reasons
+
     steps = [step.strip() for step in bounty.steps if step.strip()]
     # 大厅预览只给 1 步时，步骤越少不一定越糟：报名后的完整步骤可能补上说清的动作。
     preview_incomplete = bounty.steps_incomplete and len(steps) <= 1
@@ -135,13 +151,13 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, AbortReason | None]:
     # 长度上限避免误杀「按提示操作后截图上传」这类带具体动作的步骤。
     if not steps or all(_is_vague(step) for step in steps):
         if preview_incomplete:
-            return Verdict.DEFERRED, None
-        return Verdict.ABORT, AbortReason.UNKNOWN_STEPS
+            return Verdict.DEFERRED, []
+        return Verdict.ABORT, [AbortReason.UNKNOWN_STEPS]
     if bounty.reward is None:
-        return Verdict.ABORT, AbortReason.UNKNOWN_REWARD
+        return Verdict.ABORT, [AbortReason.UNKNOWN_REWARD]
     if bounty.reward < _MIN_REWARD:
-        return Verdict.ABORT, AbortReason.LOW_REWARD
+        return Verdict.ABORT, [AbortReason.LOW_REWARD]
     if preview_incomplete:
         # 预览步骤不足以支撑 DO：先报名，拿到完整步骤后再走一次判定。
-        return Verdict.DEFERRED, None
-    return Verdict.DO, None
+        return Verdict.DEFERRED, []
+    return Verdict.DO, []

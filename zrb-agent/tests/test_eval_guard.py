@@ -12,6 +12,7 @@ _ZRB_AGENT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ZRB_AGENT_ROOT / "scripts"))
 
 import eval_guard  # noqa: E402
+from zrb_agent.guard.feasibility import check_feasibility  # noqa: E402
 from zrb_agent.schema import AbortReason  # noqa: E402
 
 SEED_PATH = _ZRB_AGENT_ROOT / "evals" / "feasibility_seed_v2.jsonl"
@@ -107,6 +108,18 @@ class SeedFileTest(EvalGuardCase):
             bounty = eval_guard.build_bounty(row)
             self.assertEqual((bounty.allowed_regions, bounty.forbidden_regions),
                              (row.get("allowed_regions") or [], row.get("forbidden_regions") or []))
+
+    def test_seed_verdicts_unchanged_and_multi_reason(self):
+        # 列表首个口径下既有 33 条种子逐条不变；真机语料至少 3 条返回 >=2 个原因。
+        rows = eval_guard.load_seed(SEED_PATH)
+        result = eval_guard.evaluate(rows)
+        self.assertEqual((result["false_positive"], result["false_negative"],
+                          result["mismatch"], result["reason_correct"]),
+                         ([], [], [], result["reason_total"]))
+        multi = {row["id"] for row in rows
+                 if len(check_feasibility(eval_guard.build_bounty(row))[1]) >= 2}
+        self.assertGreaterEqual(len(multi), 3)
+        self.assertLessEqual({"得物星愿", "淘宝闪购26050801", "ai荔枝简单注册"}, multi)
 
     def test_build_steps_only_takes_numbered_lines(self):
         # 标题行、报名条件、备注都不算步骤，序号也要剥掉。
