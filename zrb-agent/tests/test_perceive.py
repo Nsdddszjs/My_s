@@ -1,4 +1,4 @@
-"""感知层单元测试：全部使用内联最小 XML，不依赖真机或截图文件。"""
+"""感知层单元测试：内联真机 dump 片段，不依赖真机或截图文件。"""
 import sys
 import unittest
 from pathlib import Path
@@ -9,12 +9,16 @@ from zrb_agent.perceive import (  # noqa: E402
     UiElement,
     build_page_state,
     classify_detail_page,
+    extract_allowed_regions,
+    extract_forbidden_regions,
     find_elements,
     has_approved_entry,
     is_submit_success,
     parse_ui_xml,
     tap_target,
 )
+
+RID = "com.jianzhiku.zhongrenbang:id/"
 
 BASE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
@@ -24,10 +28,11 @@ BASE_XML = """<?xml version="1.0" encoding="UTF-8"?>
   </node>
 </hierarchy>"""
 
-DETAIL_XML = """<hierarchy>
-  <node bounds="[35,100][1045,200]" text="赏金 2.13元" resource-id="bb_money" />
-  <node bounds="[35,300][1045,400]" text="报名条件" resource-id="bb_title" />
-  <node bounds="[35,1800][1045,1900]" text="立即报名" resource-id="btn_apply" />
+DETAIL_XML = f"""<hierarchy>
+  <node bounds="[35,180][1045,260]" text="【填问卷】" resource-id="{RID}mission_groupname" />
+  <node bounds="[35,280][1045,340]" text="赏金2.13元" resource-id="{RID}mission_money" />
+  <node bounds="[35,400][1045,460]" text="填写" resource-id="{RID}mission_detail" />
+  <node bounds="[35,1821][1045,1905]" text="立即报名" resource-id="{RID}btn_add" />
 </hierarchy>"""
 
 ENTITY_XML = (
@@ -46,6 +51,66 @@ APPROVED_XML = """<hierarchy>
   <node bounds="[0,100][1080,200]" text="悬赏 ID：378735" resource-id="item_bounty_id" />
   <node bounds="[0,200][1080,300]" text="赏金已发放" resource-id="item_state" />
 </hierarchy>"""
+
+# 378735G 详情页真机 dump 的完整 4 步形态。resource-id、标题/赏金/限制/步骤正文
+# 逐字来自真机（#37 与 #44 记录），仓库外没有原始 XML 文件，故在此内联；
+# step_txt 的 hint 取自 planner 记录的同一 App 真机输入框。
+FOUR_STEP_XML = f"""<hierarchy rotation="0">
+  <node bounds="[35,525][539,584]" text="【378735G畅享套餐h...】" resource-id="{RID}mission_groupname" />
+  <node bounds="[554,525][642,584]" text="简单" resource-id="{RID}mission_title" />
+  <node bounds="[800,630][1045,724]" text="赏2.13元" resource-id="{RID}mission_money" />
+  <node bounds="[70,800][816,858]" text="填写" resource-id="{RID}mission_detail" />
+  <node bounds="[70,1100][1045,1163]" text="报名条件/限制" resource-id="{RID}view_limit" />
+  <node bounds="[70,1163][1045,1221]" text="北京，西藏这两个手机号地区不能做" resource-id="{RID}limite" />
+  <node bounds="[85,1409][143,1461]" text="1" resource-id="{RID}setpcount_nocap" />
+  <node bounds="[158,1386][1030,1821]" text="禁止&#10;地区：新疆，甘肃，海南，云南，北京，上海，澳门特别行政区、宁夏回族自治区、内蒙古自治区、香港特别行政区、西藏自治区、台湾省、青海省，湖南湘西土家族苗族自治州，吉林朝鲜族自治州，手机号跟ip是这些地区的不要做" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[85,1855][143,1907]" text="2" resource-id="{RID}setpcount_cap" />
+  <node bounds="[158,1830][1030,1940]" text="浏览器，输入ip，搜索后截图" resource-id="{RID}step_detail_cap" />
+  <node bounds="[85,1950][143,2002]" text="3" resource-id="{RID}setpcount_nocap" />
+  <node bounds="[158,1940][1030,2050]" text="打开链接填写，姓名随意填写（姓名看着像人名）" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[158,2060][1030,2100]" text="按要求输入文字" resource-id="{RID}step_txt" />
+  <node bounds="[85,2110][143,2162]" text="4" resource-id="{RID}setpcount_cap" />
+  <node bounds="[158,2100][1030,2210]" text="填写完成后截图" resource-id="{RID}step_detail_cap" />
+  <node bounds="[35,2221][1045,2305]" text="立即报名" resource-id="{RID}btn_add" />
+  <node bounds="[35,2260][1045,2305]" text="打开链接" resource-id="{RID}main_btn" />
+</hierarchy>"""
+
+# 报名后同页按钮变成「提交（剩余…分钟）」；标题/赏金还在，main_btn 挂链接。
+ENROLLED_XML = f"""<hierarchy>
+  <node bounds="[35,180][1045,260]" text="【378735G畅享套餐h...】" resource-id="{RID}mission_groupname" />
+  <node bounds="[35,280][1045,340]" text="赏2.13元" resource-id="{RID}mission_money" />
+  <node bounds="[158,1400][1030,1500]" text="浏览器，输入ip，搜索后截图" resource-id="{RID}step_detail_cap" />
+  <node bounds="[35,1821][1045,1905]" text="提交（剩余5分钟）" resource-id="{RID}btn_add" />
+  <node bounds="[35,1960][1045,2040]" text="打开链接" resource-id="{RID}main_btn" />
+</hierarchy>"""
+
+# 滚一屏后标题被回收，只剩步骤、报名按钮与限制字段（真机形状）。
+SCROLLED_XML = f"""<hierarchy>
+  <node bounds="[85,215][143,267]" text="1" resource-id="{RID}setpcount_nocap" />
+  <node bounds="[158,192][1030,764]" text="禁止&#10;地区：新疆，甘肃，海南，云南，北京，上海…手机号跟ip是这些地区的不要做" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[85,805][143,857]" text="2" resource-id="{RID}setpcount_cap" />
+  <node bounds="[158,782][1030,892]" text="浏览器，输入ip，搜索后截图" resource-id="{RID}step_detail_cap" />
+  <node bounds="[158,1814][1030,1821]" text="打开链接填写，姓名随意填写（姓名看着像人名）" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[35,1821][1045,1905]" text="立即报名" resource-id="{RID}btn_add" />
+</hierarchy>"""
+
+# 序号被回收，只剩步骤正文：仍要按出现顺序补号，不能丢步骤。
+STEPS_WITHOUT_COUNTER_XML = f"""<hierarchy>
+  <node bounds="[35,100][1045,160]" text="【红果免费短剧】" resource-id="{RID}mission_groupname" />
+  <node bounds="[158,550][1030,660]" text="复制链接前往浏览器" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[158,670][1030,780]" text="再依次复制口令打开红果短剧搜索" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[158,790][1030,900]" text="助力所有，再右下角我的截图" resource-id="{RID}step_detail_nocap" />
+</hierarchy>"""
+
+NUMBERED_STEP_XML = f"""<hierarchy>
+  <node bounds="[35,100][1045,200]" text="378735G畅享套餐h" resource-id="{RID}mission_groupname" />
+  <node bounds="[35,580][1045,680]" text="1.禁止地区：新疆 甘肃 云南" resource-id="{RID}step_detail_nocap" />
+  <node bounds="[35,1800][1045,1900]" text="立即报名" resource-id="{RID}btn_add" />
+</hierarchy>"""
+
+
+def classify(xml: str, activity: str = ".Detail") -> dict:
+    return classify_detail_page(build_page_state(xml, activity))
 
 
 class PerceiveTest(unittest.TestCase):
@@ -73,10 +138,17 @@ class PerceiveTest(unittest.TestCase):
     def test_tap_target_miss(self) -> None:
         self.assertIsNone(tap_target(self.elements, contains="不存在的东西"))
 
-    def test_classify_detail_page(self) -> None:
-        result = classify_detail_page(build_page_state(DETAIL_XML, ".Detail"))
+    def test_hall_page_is_not_detail(self) -> None:
+        self.assertFalse(classify(BASE_XML, ".Main")["is_detail"])
+
+    def test_classify_detail_page_fields(self) -> None:
+        result = classify(DETAIL_XML)
         self.assertTrue(result["is_detail"])
+        self.assertEqual(result["title"], "【填问卷】")
         self.assertEqual(result["reward"], 2.13)
+        self.assertEqual(result["detail"], "填写")
+        self.assertEqual(result["primary_button"], "立即报名")
+        self.assertIsNone(result["link_button"])
 
     def test_unescape_entities(self) -> None:
         self.assertEqual(parse_ui_xml(ENTITY_XML)[0].text, "A&B")
@@ -120,6 +192,125 @@ class SubmitSuccessTest(unittest.TestCase):
     def test_empty_bounty_id_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             has_approved_entry(build_page_state(APPROVED_XML, ".Mine"), " ")
+class RealDetailPageTest(unittest.TestCase):
+    """378735G 真机详情页：字段与步骤类型。"""
+
+    def test_title_group_and_title_are_combined(self) -> None:
+        data = classify(FOUR_STEP_XML, ".NewMissionStart")
+        self.assertIn("378735G畅享套餐h", data["title"])
+        self.assertIn("简单", data["title"])
+
+    def test_four_steps_with_types(self) -> None:
+        steps = classify(FOUR_STEP_XML)["steps"]
+        self.assertEqual([step["index"] for step in steps], [1, 2, 3, 4])
+        self.assertEqual([step["type"] for step in steps],
+                         ["nocap", "cap", "nocap", "cap"])
+        self.assertEqual(steps[1]["text"], "浏览器，输入ip，搜索后截图")
+        self.assertEqual(steps[3]["text"], "填写完成后截图")
+
+    def test_text_input_hint(self) -> None:
+        data = classify(FOUR_STEP_XML)
+        self.assertTrue(data["has_text_input"])
+        self.assertEqual(data["text_input_hint"], "按要求输入文字")
+
+    def test_primary_button_text(self) -> None:
+        self.assertEqual(classify(FOUR_STEP_XML)["primary_button"], "立即报名")
+        enrolled = classify(ENROLLED_XML)
+        self.assertEqual(enrolled["primary_button"], "提交（剩余5分钟）")
+        self.assertEqual(enrolled["link_button"], "打开链接")
+
+    def test_scrolled_page_still_detected_without_fake_reward(self) -> None:
+        data = classify(SCROLLED_XML)
+        self.assertTrue(data["is_detail"])
+        self.assertIsNone(data["title"])
+        self.assertIsNone(data["reward"])
+        self.assertEqual([step["type"] for step in data["steps"]],
+                         ["nocap", "cap", "nocap"])
+        self.assertFalse(data["has_text_input"])
+
+    def test_steps_without_counter_keep_order(self) -> None:
+        steps = classify(STEPS_WITHOUT_COUNTER_XML)["steps"]
+        self.assertEqual([step["index"] for step in steps], [1, 2, 3])
+        self.assertEqual(steps[0]["text"], "复制链接前往浏览器")
+        self.assertTrue(all(step["type"] == "nocap" for step in steps))
+
+    def test_numbered_step_text_is_stripped(self) -> None:
+        data = classify(NUMBERED_STEP_XML)
+        self.assertEqual([step["text"] for step in data["steps"]],
+                         ["禁止地区：新疆 甘肃 云南"])
+        self.assertNotIn("378735G畅享套餐h", [step["text"] for step in data["steps"]])
+
+
+class RegionExtractionTest(unittest.TestCase):
+    def test_forbidden_regions_from_real_dump(self) -> None:
+        data = classify(FOUR_STEP_XML)
+        forbidden = data["forbidden_regions_hint"]
+        self.assertIsNotNone(forbidden)
+        for region in ("新疆", "甘肃", "海南", "云南", "北京", "上海", "西藏"):
+            self.assertIn(region, forbidden)
+        self.assertNotIn("手机号跟ip是这些地区的不要做", forbidden)
+        self.assertEqual(data["allowed_regions_hint"], [])
+
+    def test_allowed_regions_from_limite(self) -> None:
+        xml = f"""<hierarchy>
+          <node bounds="[0,0][10,10]" text="有IP控制，仅限广州/东莞/南宁/武汉/长沙/南昌/宁波" resource-id="{RID}limite" />
+          <node bounds="[0,20][10,30]" text="立即报名" resource-id="{RID}btn_add" />
+        </hierarchy>"""
+        data = classify(xml)
+        self.assertEqual(data["allowed_regions_hint"],
+                         ["广州", "东莞", "南宁", "武汉", "长沙", "南昌", "宁波"])
+        self.assertEqual(data["forbidden_regions_hint"], [])
+
+    def test_forbidden_regions_from_condition_line(self) -> None:
+        xml = f"""<hierarchy>
+          <node bounds="[0,0][10,10]" text="北京、西藏 两个手机号地区不能做" resource-id="{RID}limite" />
+          <node bounds="[0,20][10,30]" text="立即报名" resource-id="{RID}btn_add" />
+        </hierarchy>"""
+        self.assertEqual(classify(xml)["forbidden_regions_hint"], ["北京", "西藏"])
+
+    def test_explicit_no_limit_is_known_empty(self) -> None:
+        xml = f"""<hierarchy>
+          <node bounds="[0,0][10,10]" text="无" resource-id="{RID}limite" />
+          <node bounds="[0,20][10,30]" text="立即报名" resource-id="{RID}btn_add" />
+        </hierarchy>"""
+        data = classify(xml)
+        self.assertEqual(data["allowed_regions_hint"], [])
+        self.assertEqual(data["forbidden_regions_hint"], [])
+
+    def test_unknown_is_none_not_empty(self) -> None:
+        """没有限制字段时返回 None，不能用 [] 冒充「确定无地区限制」。"""
+        data = classify(BASE_XML, ".Main")
+        self.assertIsNone(data["allowed_regions_hint"])
+        self.assertIsNone(data["forbidden_regions_hint"])
+
+    def test_placeholder_limit_is_unknown(self) -> None:
+        xml = f"""<hierarchy>
+          <node bounds="[0,0][10,10]" text="！" resource-id="{RID}limite" />
+          <node bounds="[0,20][10,30]" text="立即报名" resource-id="{RID}btn_add" />
+        </hierarchy>"""
+        data = classify(xml)
+        self.assertIsNone(data["allowed_regions_hint"])
+        self.assertIsNone(data["forbidden_regions_hint"])
+
+    def test_unparsed_region_concept_is_unknown(self) -> None:
+        """提到 IP 控制却解析不出名单时，宁可未知，也不报「确定无」。"""
+        xml = f"""<hierarchy>
+          <node bounds="[0,0][10,10]" text="有IP控制" resource-id="{RID}limite" />
+          <node bounds="[0,20][10,30]" text="立即报名" resource-id="{RID}btn_add" />
+        </hierarchy>"""
+        data = classify(xml)
+        self.assertIsNone(data["allowed_regions_hint"])
+        self.assertIsNone(data["forbidden_regions_hint"])
+
+    def test_helpers_extract_expected_lists(self) -> None:
+        self.assertEqual(
+            extract_forbidden_regions(
+                ["禁止地区：新疆，甘肃…手机号跟ip是这些地区的不要做"]),
+            ["新疆", "甘肃"])
+        self.assertEqual(extract_allowed_regions(["必须到以下地区：北京、上海"]),
+                         ["北京", "上海"])
+        self.assertEqual(extract_allowed_regions(["仅限泰国IP"]), ["泰国"])
+        self.assertEqual(extract_allowed_regions(["仅限新用户"]), [])
 
 
 class ContentDescPerceiveTest(unittest.TestCase):
