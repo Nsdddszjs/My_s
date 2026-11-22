@@ -34,6 +34,19 @@ class EthicsGuardTest(unittest.TestCase):
         steps = ["填写姓名", "输入手机号", "输入验证码", "填写地址"]
         self.assertEqual(ethics(steps), AbortReason.ETHICS_FABRICATED_IDENTITY)
         self.assertIsNone(ethics(["填写姓名"]))
+    def test_fabricated_identity_extended(self):
+        # 编造支：自编号码
+        self.assertEqual(ethics(["填155********（后8位自编的11位口令码）"]), AbortReason.ETHICS_FABRICATED_IDENTITY)
+        # 编造支：改成别人的地址
+        self.assertEqual(ethics(["手动修改成下方口令中地址和邀请码"]), AbortReason.ETHICS_FABRICATED_IDENTITY)
+        # 实证件支：需要证件照片（来自 limite）
+        self.assertEqual(ethics(["打开链接进入"], limite="新用户 满18周岁 需要证件照片 认证绑卡分类"), AbortReason.ETHICS_FABRICATED_IDENTITY)
+        # 实证件支：实名认证
+        self.assertEqual(ethics(["完成实名认证"]), AbortReason.ETHICS_FABRICATED_IDENTITY)
+        # 不误伤：仅含分类标签
+        self.assertIsNone(ethics(["打开App签到"], limite="认证绑卡分类"))
+        # 不误伤：提示不要选有广告的（不应被虚假调研误杀）
+        self.assertIsNone(ethics(["打开页面", "不要选有广告的"]))
     def test_fake_survey_by_survey_word(self):
         self.assertEqual(ethics(["完成一份调查"]), AbortReason.ETHICS_FAKE_SURVEY)
     def test_fake_survey_by_standard_answer(self):
