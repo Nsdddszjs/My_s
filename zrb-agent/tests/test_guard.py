@@ -169,6 +169,58 @@ class FeasibilityGuardTest(unittest.TestCase):
         self.assertEqual(feasibility(["打开链接填写信息"]), (Verdict.DO, None))
 
 
+class TwoPhasePreviewTest(unittest.TestCase):
+    """大厅预览（steps_incomplete）只给 1 步时不能下可行性结论。"""
+
+    def test_single_step_preview_is_deferred_not_do(self):
+        verdict, reason = feasibility(["截图上传"], steps_incomplete=True)
+        self.assertIs(verdict, Verdict.DEFERRED)
+        self.assertIsNot(verdict, Verdict.DO)
+        self.assertIsNone(reason)
+
+    def test_no_steps_preview_is_deferred(self):
+        # 列表页抓不到步骤也属于「预览不完整」，不能永久判 UNKNOWN_STEPS。
+        self.assertEqual(feasibility([], steps_incomplete=True), (Verdict.DEFERRED, None))
+
+    def test_vague_single_step_preview_is_deferred(self):
+        # 预览只有一句套话，报名后可能补出可执行动作，不能按 UNKNOWN_STEPS 拒掉。
+        self.assertEqual(feasibility(["按页面提示操作"], steps_incomplete=True),
+                         (Verdict.DEFERRED, None))
+
+    def test_preview_with_enough_steps_judges_normally(self):
+        # 条件只在有效步骤 <= 1 时生效；4 步预览仍按既有规则判 DO。
+        steps = ["打开链接填写信息", "截图上传", "复制文字", "提交截图"]
+        self.assertEqual(feasibility(steps, steps_incomplete=True), (Verdict.DO, None))
+
+    def test_complete_single_step_still_do(self):
+        # 方向测试：steps_incomplete=False 时 1 步行为与改动前一致。
+        self.assertEqual(feasibility(["截图上传"], steps_incomplete=False), (Verdict.DO, None))
+
+    def test_complete_four_steps_still_do(self):
+        steps = ["打开链接填写信息", "截图上传", "复制文字", "提交截图"]
+        self.assertEqual(feasibility(steps, steps_incomplete=False), (Verdict.DO, None))
+
+    def test_complete_vague_single_step_still_unknown(self):
+        self.assertEqual(feasibility(["按页面提示操作"], steps_incomplete=False),
+                         (Verdict.ABORT, AbortReason.UNKNOWN_STEPS))
+
+    def test_preview_keeps_ethics_region_abort(self):
+        # 地区来自结构化字段，不受步骤完整性影响，仍应先拒。
+        self.assertEqual(feasibility(["截图上传"], steps_incomplete=True,
+                                     allowed_regions=["泰国"]),
+                         (Verdict.ABORT, AbortReason.REGION_REJECTED))
+
+    def test_preview_keeps_platform_keyword_abort(self):
+        # 预览步骤是完整步骤的子集，已出现的平台门槛不会因步骤变多而消失。
+        self.assertEqual(feasibility(["打开支付宝"], steps_incomplete=True),
+                         (Verdict.ABORT, AbortReason.NEEDS_ALIPAY))
+
+    def test_preview_keeps_low_reward_abort(self):
+        # 赏金是列表页字段事实，低赏金结论不依赖步骤完整性，照常先判。
+        self.assertEqual(feasibility(["截图上传"], reward=0.17, steps_incomplete=True),
+                         (Verdict.ABORT, AbortReason.LOW_REWARD))
+
+
 class SchemaTest(unittest.TestCase):
     def test_dict_round_trip(self):
         bounty = make_bounty(["截图上传"], reward=0.5, allowed_regions=["云南"],
@@ -185,3 +237,10 @@ class SchemaTest(unittest.TestCase):
         })
         self.assertEqual(bounty.allowed_regions, ["泰国"])
         self.assertEqual(bounty.forbidden_regions, [])
+    def test_steps_incomplete_defaults_false_and_round_trips(self):
+        # 旧数据没有该字段：必须按 False（步骤完整）处理，不能改变既有判定。
+        legacy = Bounty.from_dict({"id": "old", "title": "旧", "reward": 1.0,
+                                   "steps": ["截图上传"]})
+        self.assertFalse(legacy.steps_incomplete)
+        preview = make_bounty(["截图上传"], steps_incomplete=True)
+        self.assertTrue(Bounty.from_dict(preview.to_dict()).steps_incomplete)
