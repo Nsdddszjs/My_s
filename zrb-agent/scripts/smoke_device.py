@@ -5,9 +5,13 @@
 
     python3 scripts/smoke_device.py --adb /path/to/adb.exe
 
+相册选图检查需要先在 App 里打开相册选择器（标题「相机胶卷」），再运行：
+
+    python3 scripts/smoke_device.py --adb /path/to/adb.exe --gallery
+
 每项输出一行 PASS/FAIL <检查名> <实测值>；任一 FAIL 退出码为 1。
 """
-import argparse, os, sys, tempfile
+import argparse, os, sys, tempfile, time
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,6 +40,8 @@ def focused_text(device, dump_path):
 def main():
     parser = argparse.ArgumentParser(description="真机冒烟")
     parser.add_argument("--adb", default="adb", help="adb 可执行文件路径")
+    parser.add_argument("--gallery", action="store_true",
+                        help="只跑相册选图检查；需先打开 App 的相册选择器（相机胶卷）")
     args = parser.parse_args()
     device = Device(args.adb)
     workdir = tempfile.mkdtemp(prefix="zrb-smoke-")
@@ -77,6 +83,23 @@ def main():
             return True, "ValueError（不静默）"
         text = focused_text(device, dump)
         return "测试" in text, repr(text)
+
+    def gallery_pick():
+        """连续截 5 张后，最早那张仍必须按 name 选中，而不是点第 1 张。"""
+        name = f"zrb_smoke_{int(time.time())}"
+        try:
+            for index in range(5):
+                device.capture_to_gallery(f"{name}_{index}")
+                time.sleep(0.4)
+            time.sleep(1.5)
+            picked = device.pick_from_gallery(f"{name}_0")
+            return picked.endswith(f"/{name}_0.png"), picked
+        finally:
+            device.clean_gallery(f"{name}_*")
+
+    if args.gallery:
+        check("连续截 5 张后仍按 name 选中证据图", gallery_pick)
+        return 0 if all(results) else 1
 
     check("screen_size() 竖屏（宽 < 高）", portrait)
     check("screen_size() 与截图 PNG 头一致", png_agrees)

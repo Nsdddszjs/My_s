@@ -10,6 +10,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zrb_agent.device import Device, denormalize
 
+GALLERY_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<hierarchy rotation="0">
+  <node class="android.widget.ImageView" clickable="true" bounds="[0,300][200,500]" />
+  <node class="android.widget.ImageView" clickable="true" bounds="[200,300][400,500]" />
+  <node class="android.widget.ImageView" clickable="true" bounds="[400,300][600,500]" />
+</hierarchy>"""
+
+MEDIA_ROWS = (
+    "Row: 0 _id=8, _data=/storage/emulated/0/Download/ev1.png, date_added=100\n"
+    "Row: 1 _id=9, _data=/storage/emulated/0/DCIM/Camera/ev1.png, date_added=200\n"
+    "Row: 2 _id=10, _data=/storage/emulated/0/DCIM/Camera/newer.png, date_added=300\n"
+)
+
 
 class DeviceTest(unittest.TestCase):
     def setUp(self):
@@ -43,6 +56,55 @@ class DeviceTest(unittest.TestCase):
         self.assertEqual(second, ["shell", "screencap", "-p", "/sdcard/DCIM/Camera/ev1.png"])
         self.assertIn("MEDIA_SCANNER_SCAN_FILE", " ".join(third))
         self.assertIn("file:///sdcard/DCIM/Camera/ev1.png", third)
+
+    def test_capture_to_gallery_controlled_name(self):
+        with patch.object(self.device, "_run") as run:
+            self.device.capture_to_gallery("ev1.png")
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            ["shell", "screencap", "-p", "/sdcard/DCIM/Camera/ev1.png"],
+        )
+
+    def test_capture_to_gallery_rejects_path_traversal(self):
+        with patch.object(self.device, "_run") as run:
+            with self.assertRaises(ValueError):
+                self.device.capture_to_gallery("../evil")
+        run.assert_not_called()
+
+    def test_clean_gallery_only_matching_rows(self):
+        rows = (
+            "Row: 0 _id=7, _data=/sdcard/DCIM/Camera/_shot_debug.png\n"
+            "Row: 1 _id=8, _data=/sdcard/DCIM/Camera/keep.png\n"
+        )
+        with patch.object(self.device, "_run", side_effect=[rows, "", ""]) as run:
+            removed = self.device.clean_gallery("*_shot_*")
+        self.assertEqual(["/sdcard/DCIM/Camera/_shot_debug.png"], removed)
+        calls = [call.args[0] for call in run.call_args_list]
+        self.assertIn(
+            ["shell", "content", "delete", "--uri",
+             "content://media/external/images/media/7"], calls
+        )
+        self.assertIn(["shell", "rm", "-f", "/sdcard/DCIM/Camera/_shot_debug.png"], calls)
+        self.assertNotIn(["shell", "rm", "-f", "/sdcard/DCIM/Camera/keep.png"], calls)
+
+    def test_pick_from_gallery_missing_name_raises(self):
+        with patch.object(self.device, "_run", return_value=MEDIA_ROWS) as run:
+            with self.assertRaises(LookupError):
+                self.device.pick_from_gallery("missing")
+        self.assertFalse(
+            any(call.args[0][:3] == ["shell", "input", "tap"] for call in run.call_args_list)
+        )
+
+    def test_pick_from_gallery_matches_name_to_grid_cell(self):
+        def fake_dump(path):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(GALLERY_XML)
+
+        with patch.object(self.device, "_run", return_value=MEDIA_ROWS) as run, \
+                patch.object(self.device, "dump_ui", side_effect=fake_dump):
+            picked = self.device.pick_from_gallery("ev1.png")
+        self.assertEqual("/storage/emulated/0/DCIM/Camera/ev1.png", picked)
+        self.assertEqual(["shell", "input", "tap", "300", "400"], run.call_args.args[0])
 
     def test_open_url(self):
         with patch.object(self.device, "_run") as run:
