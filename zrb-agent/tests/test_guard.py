@@ -7,14 +7,15 @@ from zrb_agent.guard.feasibility import check_feasibility, primary_reason
 from zrb_agent.schema import AbortReason, Bounty, ReasonKind, Verdict
 
 
-def make_bounty(steps, reward=1.0, allowed_regions=(), forbidden_regions=(), **fields):
+def make_bounty(steps, reward=1.0, allowed_regions=(), forbidden_regions=(),
+                title="测试任务", **fields):
     """构造测试任务，默认奖励 1 元、地区字段已知且为空（无地区限制）。
 
     需要「没读到」时显式传 None；空列表表示「读到了，确实为空」。
-    ``fields`` 用来透传详情页字段（``type`` / ``limite``）。
+    ``title`` 与 ``fields`` 用来透传详情页字段（``title`` / ``type`` / ``limite``）。
     """
     return Bounty(
-        "t1", "测试任务", reward, list(steps),
+        "t1", title, reward, list(steps),
         None if allowed_regions is None else list(allowed_regions),
         None if forbidden_regions is None else list(forbidden_regions),
         **fields,
@@ -172,6 +173,38 @@ class FeasibilityGuardTest(unittest.TestCase):
             "浏览器打开链接，直接下载安装，选择上方apk按键，找到\"仙遇\"，点击下载",
         ])
         self.assertIs(verdict, Verdict.ABORT)
+    def test_jijin_pure_download_needs_login(self):
+        # Issue #69【极近】：步骤只有下载安装，装完还有手机号登录墙；报名条件
+        # 「限新用户」是可读的第二段信号，必须判 NEEDS_LOGIN 而不是 DO。
+        verdict, reasons = check_reasons(
+            ['应用商店（或浏览器）下载APP"极近"'],
+            title="极近", reward=1.87, limite="限新用户")
+        self.assertIs(verdict, Verdict.ABORT)
+        self.assertIn(AbortReason.NEEDS_LOGIN, reasons)
+    def test_completion_action_missing_from_steps(self):
+        # 【仙遇】真机文案：标题写「试玩」，步骤只写到下载安装。按步骤执行到
+        # 末尾会漏掉试玩，必须显式标出「完成条件未在步骤中说明」。
+        verdict, reasons = check_reasons([
+            "浏览器打开链接，直接下载安装，选择上方apk按键，找到\"仙遇\"，点击下载",
+        ], title="仙遇游戏试玩", reward=3.0)
+        self.assertIs(verdict, Verdict.ABORT)
+        self.assertIn(AbortReason.NEEDS_THIRD_PARTY_APP, reasons)
+        self.assertIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
+    def test_type_only_completion_action_is_not_do(self):
+        # 【创意宝进兜】：type 写「看10条视频，点击广告下载一款游戏试玩」，
+        # 步骤只写「看10条视频」，旧版会静默判 DO；第二段门槛必须挡住。
+        verdict, reasons = check_reasons(
+            ["看10条视频"], title="创意宝进兜", reward=1.28,
+            type="看10条视频，点击广告下载一款游戏试玩")
+        self.assertEqual((verdict, reasons),
+                         (Verdict.ABORT, [AbortReason.COMPLETION_UNSPECIFIED]))
+    def test_completion_action_in_steps_is_not_flagged(self):
+        # 标题与步骤都写了试玩：完成条件已说明，不能误杀。
+        _, reasons = check_reasons(["下载游戏", "试玩到 20 级"],
+                                   title="仙遇游戏试玩", reward=3.0)
+        self.assertNotIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
+    def test_completion_reason_kind_is_data(self):
+        self.assertIs(AbortReason.COMPLETION_UNSPECIFIED.kind, ReasonKind.DATA)
     def test_do(self):
         self.assertEqual(feasibility(["截图上传"], reward=1.0), (Verdict.DO, None))
     def test_region_beats_survey_in_feasibility(self):
@@ -268,6 +301,14 @@ class TwoPhasePreviewTest(unittest.TestCase):
         # 条件只在有效步骤 <= 1 时生效；4 步预览仍按既有规则判 DO。
         steps = ["打开链接填写信息", "截图上传", "复制文字", "提交截图"]
         self.assertEqual(feasibility(steps, steps_incomplete=True), (Verdict.DO, None))
+
+    def test_preview_completion_gap_waits_for_complete_steps(self):
+        # 「步骤里缺试玩」可能是预览截断而不是真缺；预览不完整时不据此 ABORT，
+        # 留给报名后的完整步骤复判。
+        verdict, reasons = check_reasons(
+            ["看10条视频"], title="创意宝进兜",
+            type="看10条视频，点击广告下载一款游戏试玩", steps_incomplete=True)
+        self.assertEqual((verdict, reasons), (Verdict.DEFERRED, []))
 
     def test_complete_single_step_still_do(self):
         # 方向测试：steps_incomplete=False 时 1 步行为与改动前一致。
