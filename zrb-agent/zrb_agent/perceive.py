@@ -111,3 +111,37 @@ def classify_detail_page(page: PageState) -> dict:
              or (len(line) > 8 and any(k in line for k in _STEP_KEYWORDS))]
     return {"is_detail": is_detail, "reward": reward, "steps_text": steps,
             "restricted_regions_hint": []}
+
+
+SUBMIT_SUCCESS_ACTIVITY = "MissionSubmitSuccess"
+
+
+def is_submit_success(focus_activity: str, page_state: PageState) -> bool:
+    """判定提交是否真的成功；只弹 toast 不算成功。
+
+    实测成功信号只有两种：前台活动变为
+    `com.jianzhiku.activity.MissionSubmitSuccess`（页面「提交成功 / 等待悬赏主审核 /
+    24 小时内」），或页面文本同时出现「提交成功」与「等待…审核」。
+    漏填内容时点提交只弹 700ms toast「有内容没有填写...」，页面完全不变，
+    因此绝不能把 toast 当作提交成功。
+    """
+    activities = f"{focus_activity}\n{page_state.activity}".lower()
+    if SUBMIT_SUCCESS_ACTIVITY.lower() in activities:
+        return True
+    joined = "\n".join(page_state.texts)
+    return "提交成功" in joined and "等待" in joined and "审核" in joined
+
+
+def has_approved_entry(page_state: PageState, bounty_id: str) -> bool:
+    """「我的 → 已提交 → 已通过」列表里是否出现指定悬赏的条目。
+
+    必须同时满足：页面处于「已通过」视图，且条目文本包含 bounty_id。
+    只出现「已提交 / 审核中」不算通过。调用方应在提交前记录列表基线，
+    提交后用本函数做 FINISH(result=done) 前的终局校验。
+    """
+    bounty_id = str(bounty_id).strip()
+    if not bounty_id:
+        raise ValueError("bounty_id 不能为空")
+    if "已通过" not in "\n".join(page_state.texts):
+        return False
+    return any(bounty_id in text for text in page_state.texts)

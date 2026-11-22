@@ -11,6 +11,14 @@
 - `None` 语义：`reward`、`allowed_regions`、`forbidden_regions` 的 `None` 表示「没读到」，不是 0 元或空名单。地区未知返回 `UNKNOWN_REGIONS`，赏金未知返回 `UNKNOWN_REWARD`，都不许按「无限制」或「低赏金」处理；空列表才表示页面明确没有该项限制。已废弃的 `restricted_regions` 在 `from_dict` 中按 `allowed_regions` 兼容，两个地区字段同时非空是数据错误（`ValueError`）。
 - `DEVICE_REGION = "云南"`：本机公网 IP 归属地为中国云南昆明，**换机器时必须按实际 IP 归属地修改**，否则地区限制判断会失效。
 
+## 动作与参数
+
+10 个动作见 `prompts/planner.md`。`PICK_FROM_GALLERY` 用 `{"name": ...}` 按文件名匹配，不用 index 参数——相册按 `date_added` 倒序，索引会随调试截图变化。
+
+## 可做率与交付索引
+
+「可做率」是判定规则与环境配置的函数，不是平台常量；历史「64 条全部判为不可做」是特定环境下的结论，不能当平台结论。分层说明、动作参数与已合并 PR 清单见根目录 `README-交付索引.md`。
+
 测试：`cd zrb-agent && python -m unittest discover -s tests`
 
 ## 明确不做

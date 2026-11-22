@@ -95,7 +95,10 @@ class DeviceTest(unittest.TestCase):
         with patch.object(self.device, "_run") as run:
             with self.assertRaises(ValueError) as ctx:
                 self.device.input_text("你好")
-        self.assertIn("ask_human", str(ctx.exception))
+        message = str(ctx.exception)
+        self.assertIn("ask_human", message)
+        self.assertIn("NPE", message)
+        self.assertIn("keymap", message)
         run.assert_not_called()
 
     def test_input_text_replaces_space(self):

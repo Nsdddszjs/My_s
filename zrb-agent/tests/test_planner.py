@@ -60,6 +60,12 @@ class PlannerTest(unittest.TestCase):
         headings = re.findall(r"(?m)^### \d+\. ", system)
         self.assertEqual(6, len(headings), "prompt 里 6 个实战小节不齐")
 
+    def test_prompt_contains_non_ascii_downgrade(self):
+        """非 ASCII 输入必须被钉死在 ASK_HUMAN / FINISH(aborted)，禁止尝试输入。"""
+        system = build_messages(PAGE, "输入中文", [], "任务")[0]["content"]
+        for keyword in ("非 ASCII", "ASK_HUMAN", "FINISH(result=aborted)"):
+            self.assertIn(keyword, system)
+
     def test_plan_scenarios(self):
         call, calls = fake(LEGAL)
         self.assertEqual(ActionType.TAP, plan(PAGE, "点报名", [], "任务", call).action)

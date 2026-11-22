@@ -10,6 +10,8 @@ from zrb_agent.perceive import (  # noqa: E402
     build_page_state,
     classify_detail_page,
     find_elements,
+    has_approved_entry,
+    is_submit_success,
     parse_ui_xml,
     tap_target,
 )
@@ -32,6 +34,18 @@ ENTITY_XML = (
     '<hierarchy><node bounds="[0,0][100,100]" '
     'text="A&amp;B" resource-id="x" /></hierarchy>'
 )
+
+SUCCESS_XML = """<hierarchy>
+  <node bounds="[0,0][1080,200]" text="提交成功" resource-id="tv_title" />
+  <node bounds="[0,200][1080,300]" text="等待悬赏主审核" resource-id="tv_desc" />
+  <node bounds="[0,300][1080,400]" text="24小时内" resource-id="tv_tip" />
+</hierarchy>"""
+
+APPROVED_XML = """<hierarchy>
+  <node bounds="[0,0][1080,100]" text="已通过" resource-id="tab_approved" />
+  <node bounds="[0,100][1080,200]" text="悬赏 ID：378735" resource-id="item_bounty_id" />
+  <node bounds="[0,200][1080,300]" text="赏金已发放" resource-id="item_state" />
+</hierarchy>"""
 
 
 class PerceiveTest(unittest.TestCase):
@@ -67,6 +81,45 @@ class PerceiveTest(unittest.TestCase):
     def test_unescape_entities(self) -> None:
         self.assertEqual(parse_ui_xml(ENTITY_XML)[0].text, "A&B")
         self.assertEqual(build_page_state(ENTITY_XML, ".Main").texts, ["A&B"])
+
+
+class SubmitSuccessTest(unittest.TestCase):
+    """提交成功的可验证闭环：toast 不算，活动变更/成功页/已通过列表才算。"""
+
+    def test_toast_only_is_not_success(self) -> None:
+        page = build_page_state(BASE_XML, ".Detail")
+        page.texts.append("有内容没有填写...")  # 700ms toast，页面本身不变
+        self.assertFalse(is_submit_success(
+            "mCurrentFocus=Window{abc u0 com.jianzhiku.activity.BountyDetail}", page))
+
+    def test_mission_submit_success_activity(self) -> None:
+        page = build_page_state(BASE_XML, ".Detail")
+        self.assertTrue(is_submit_success(
+            "mCurrentFocus=Window{abc u0 com.jianzhiku.activity.MissionSubmitSuccess}",
+            page))
+
+    def test_success_page_text_without_activity_change(self) -> None:
+        page = build_page_state(SUCCESS_XML, ".Main")
+        self.assertTrue(is_submit_success("mCurrentFocus=Window{abc u0 .Main}", page))
+
+    def test_activity_from_page_state_is_also_accepted(self) -> None:
+        page = build_page_state(BASE_XML, "com.jianzhiku.activity.MissionSubmitSuccess")
+        self.assertTrue(is_submit_success("", page))
+
+    def test_approved_entry_requires_approved_tab_and_bounty_id(self) -> None:
+        page = build_page_state(APPROVED_XML, ".Mine")
+        self.assertTrue(has_approved_entry(page, "378735"))
+        self.assertFalse(has_approved_entry(page, "999999"))
+
+    def test_pending_entry_is_not_approved(self) -> None:
+        page = build_page_state(
+            BASE_XML.replace("赏金任务", "审核中"), ".Mine")
+        page.texts.extend(["悬赏 ID：378735", "已提交"])
+        self.assertFalse(has_approved_entry(page, "378735"))
+
+    def test_empty_bounty_id_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            has_approved_entry(build_page_state(APPROVED_XML, ".Mine"), " ")
 
 
 if __name__ == "__main__":

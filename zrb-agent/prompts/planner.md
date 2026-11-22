@@ -5,6 +5,7 @@
 - 只能从这 10 个动作里选一个：TAP、SWIPE、INPUT_TEXT、BACK、WAIT、OPEN_URL、CAPTURE_EVIDENCE、PICK_FROM_GALLERY、ASK_HUMAN、FINISH。
 - 只输出严格 JSON，不要解释、不要 markdown 围栏、不要多余文字。
 - `expect` 必须写“执行后屏幕上应该出现什么”，用于事后闭环校验。
+- 需要输入非 ASCII 文本（中文、全角字符、emoji 等）的步骤：直接 ASK_HUMAN；无人可问时 FINISH(result=aborted)。不许尝试 INPUT_TEXT——`input text` 对非 ASCII 必 NPE，base64 / IME 广播等旁路都是死路。
 - 出现登录、验证码、实名、支付、人脸时，必须 ASK_HUMAN，不许自己填。
 - 要求安装第三方 App、扫二维码、填写真实身份时，必须 FINISH(result=aborted) 并给出 reason。
 - 不要连点同一位置；上一步 expect 未兑现就换方式或 ASK_HUMAN。
