@@ -1,6 +1,7 @@
 """可行性判定：先过伦理守卫，再按步骤关键词与奖励金额过滤。"""
 
 import re
+from dataclasses import dataclass, field
 
 from zrb_agent.guard.ethics import check_ethics
 from zrb_agent.schema import AbortReason, Bounty, Verdict
@@ -24,6 +25,38 @@ _THIRD_PARTY_APPS = (
     "百度地图", "夸克", "剪映", "汽水音乐",
     "联通", "王卡", "微店", "天猫", "滴滴", "麦当劳", "惠康", "手心输入法",
     "穿越火线", "梦幻西游", "爱加速",
+)
+
+# 已装/已登录状态都用包名（`pm list packages -3` 的产物）；这份表只登记
+# 真机验证过或明确知道对应关系的中文显示名。调用方可用 Environment.name_to_pkg
+# 覆盖/扩充；表里没有的名字视为「不知道对应哪个包」，仍按缺件保守处理。
+_APP_PACKAGES = {
+    "起点读书": "com.qidian.QDReader",
+    "番茄小说": "com.dragon.read",
+    "番茄": "com.dragon.read",
+    "红果免费短剧": "com.phoenix.read",
+    "小红书": "com.xingin.xhs",
+    "淘宝": "com.taobao.taobao",
+    "天猫": "com.taobao.taobao",
+    "手机天猫": "com.taobao.taobao",
+    "QQ": "com.tencent.mobileqq",
+    "京东": "com.jingdong.app.mall",
+    "拼多多": "com.xunmeng.pinduoduo",
+    "ai荔枝": "com.jsbc.ailitchi",
+    "AI荔枝": "com.jsbc.ailitchi",
+    "手心输入法": "com.xinshuru.inputmethod",
+    "极近": "com.wuhan.jijin",
+    "微信": "com.tencent.mm",
+    "软件商店": "com.heytap.market",
+}
+
+# 「打开 X 页面」里的 X 是 App 内部 tab/页面，不是另一个 App。只在传入
+# Environment 时生效，避免改变不传环境时的既有归因。
+_PAGE_NOUNS = (
+    "精选", "首页", "我的", "个人中心", "详情页", "详情", "商品页", "店铺",
+    "活动页", "任务页", "任务", "排行榜", "分类", "搜索页", "设置", "钱包",
+    "消息", "发现", "推荐", "购物车", "订单", "个人主页", "主页", "直播间",
+    "视频页", "小说页", "书架", "目录", "章节",
 )
 
 # 平台文案的惯用句式是「打开 XX」，只认动词会漏；捕获组不在浏览器白名单里，
@@ -73,11 +106,178 @@ def _completion_text(bounty: Bounty) -> str:
     )
 
 
+# 前序依赖：这单要求先完成前几天的活动/前置任务，本身就不是独立可做的单。
+# 「第 N 天」几乎只在续做语境里出现；「后续」单独出现可能是营销话术
+# （【cpb会员中心】「不错过后续福利」），所以只认带比较/存在语义的搭配。
+# 语义是「这单做不了」，因此排在任何环境缺件修正之前。
+_PREREQ_STRONG = re.compile(
+    r"(第[一二三四五六七1234567]天"
+    r"|做过我的|之前做过|做过的"
+    r"|需要先完成|先做完)"
+)
+_PREREQ_WEAK = re.compile(
+    r"(后续(赏金|奖励|任务)|有后续|两天后续|三天后续|后续比这个)"
+)
+
+
+@dataclass(frozen=True)
+class Environment:
+    """执行设备的可用环境快照，用来回答「缺的到底是不是真缺」。
+
+    ``installed`` / ``logged_in`` 是**包名**集合（``pm list packages -3`` 与登录态
+    审计的产物）；``account_is_new`` 是包名 → 账号是否新号；``name_to_pkg`` 是文案
+    里的中文显示名 → 包名。默认值全是空集合/空表，含义是「不知道」而不是
+    「设备上什么都没装」；不知道的一律按缺件保守处理。
+
+    只在调用方显式传入时生效；``env is None`` 时守卫层保持不感知环境的旧行为。
+    ``account_is_new`` 属于高风险的账号维度：只对人工确认过的新号填 True，
+    不填（或 False）时人群门槛照旧开火。
+    """
+
+    installed: frozenset[str] = frozenset()
+    logged_in: frozenset[str] = frozenset()
+    account_is_new: dict[str, bool] = field(default_factory=dict)
+    name_to_pkg: dict[str, str] = field(default_factory=lambda: dict(_APP_PACKAGES))
+
+
 def _login_text(bounty: Bounty) -> str:
     """把可能暴露登录态的三个来源拼成一段文本：type、limite 与步骤。"""
     return " ".join(
         part for part in (bounty.type, bounty.limite, *bounty.step_texts) if part
     )
+
+
+def _has_prerequisite(bounty: Bounty) -> bool:
+    """文案是否表明该悬赏依赖之前已完成的任务；不读环境，纯文本事实。
+
+    ``title`` / ``type`` / ``limite`` 必须一起读：真机语料里【百度推荐官】的
+    「后续比这个赏金高」只出现在 ``limite``，只读 steps 会漏。
+    """
+    text = " ".join(
+        part for part in (bounty.title, bounty.type, bounty.limite, *bounty.step_texts) if part
+    )
+    return bool(_PREREQ_STRONG.search(text) or _PREREQ_WEAK.search(text))
+
+
+def _named_apps(text: str, env: Environment) -> tuple[list[str], list[str]]:
+    """返回 (映射表能查到包名的 App, 词表点名但映射表没登记的 App)。
+
+    第二阶段那些 App 对应哪个包未知，无法确认「已装/已登录」，必须保守处理。
+    """
+    mapped = [name for name in env.name_to_pkg if name in text]
+    unmapped = [
+        app for app in _THIRD_PARTY_APPS if app in text and app not in env.name_to_pkg
+    ]
+    return mapped, unmapped
+
+
+def _installed(name: str, env: Environment) -> bool:
+    pkg = env.name_to_pkg.get(name)
+    return pkg is not None and pkg in env.installed
+
+
+def _apps_near_install_verb(text: str, names: list[str]) -> list[str]:
+    """文案里紧挨着「下载/安装/注册/试玩」出现的 App 名。
+
+    用于判断「要装的那个 App」具体是谁；只在动作词附近找，避免把页面里顺带
+    提到的另一个已装 App 当成下载对象。
+    """
+    found: list[str] = []
+    for name in names:
+        start = 0
+        while True:
+            index = text.find(name, start)
+            if index < 0:
+                break
+            start = index + 1
+            window = text[max(0, index - 8): index + len(name) + 8]
+            if any(verb in window for verb in _THIRD_PARTY_TERMS):
+                found.append(name)
+                break
+    return found
+
+
+def _task_target_app(bounty: Bounty) -> str | None:
+    """「要下载的 App」同时也是任务标题主体时返回该 App 名，否则 ``None``。
+
+    判据是 App 名同时出现在 steps 与标题里，不依赖 ``_THIRD_PARTY_APPS`` 词表，
+    所以「仙遇」「梦幻西游」这类词表外的名字也能认出来。标题里的书名号内容优先。
+    """
+    blob = " ".join(bounty.step_texts)
+    head = bounty.title or ""
+    if not blob or not head.strip():
+        return None
+    for match in re.finditer(r"[【\[]([^】\]]{2,12})[】\]]", head):
+        name = match.group(1).strip()
+        if name and name in blob:
+            return name
+    stem = re.sub(r"[【】\[\]]", " ", head).strip()
+    for name in (stem, stem.replace(" ", "")):
+        if len(name) >= 2 and name in blob:
+            return name
+    return None
+
+
+def _needs_third_party_app(bounty: Bounty, env: Environment) -> bool:
+    """环境感知版第三方 App 判定。
+
+    四类情况视为已满足：①要装的就是任务主体 App（D2，交给能力矩阵判能否安装）；
+    ②文案点名的 App 全部已装；③「打开 X 页面」里的 X 是站内页面（D1）；④开放
+    动作指向已装 App。说不清的对象（词表外、映射缺失、只说「下载 App」）仍拦。
+    """
+    text = " ".join(bounty.step_texts)
+    target = _task_target_app(bounty)
+    mapped, unmapped = _named_apps(text, env)
+
+    unresolved = [
+        name for name in mapped if name != target and not _installed(name, env)
+    ]
+    unresolved.extend(app for app in unmapped if app != target)
+    if unresolved:
+        return True
+
+    wants_install = any(term in text for term in _THIRD_PARTY_TERMS)
+    # 没说清装的是哪个 App 时无法确认已装；任务目标 App 本身就是下载对象时豁免。
+    if wants_install and not (target and target in text):
+        if not _apps_near_install_verb(text, mapped + unmapped):
+            return True
+
+    for match in _OPEN_APP_PATTERN.finditer(text):
+        name = match.group(1)
+        if name in _BROWSER_WHITELIST or name == target or name in _PAGE_NOUNS:
+            continue
+        if _installed(name, env):
+            continue
+        return True
+    return False
+
+
+def _login_satisfied(text: str, env: Environment) -> bool:
+    """D3：文案点名的 App 全都已登录时，登录门槛在环境层面已满足。
+
+    说不出是哪个 App 的、或点到了一个未登录/无法核实的 App，一律不算满足。
+    """
+    mapped, unmapped = _named_apps(text, env)
+    if not mapped or unmapped:
+        return False
+    return all(
+        env.name_to_pkg[name] in env.logged_in for name in mapped
+    )
+
+
+def _audience_satisfied(text: str, env: Environment) -> bool:
+    """D4：点名的 App 账号确实已是新号时，人群门槛在环境层面已满足。
+
+    这是最高风险的一条，必须同时满足「App 已登录」与「账号明确是新号」，缺一不可。
+    """
+    mapped, unmapped = _named_apps(text, env)
+    if not mapped or unmapped:
+        return False
+    for name in mapped:
+        pkg = env.name_to_pkg[name]
+        if pkg not in env.logged_in or env.account_is_new.get(pkg) is not True:
+            return False
+    return True
 
 
 # 不含具体动作的套话：整条步骤只剩这些词，等于没说清要干什么。
@@ -96,11 +296,19 @@ def primary_reason(reasons: list[AbortReason]) -> AbortReason | None:
     return reasons[0] if reasons else None
 
 
-def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
+def check_feasibility(
+    bounty: Bounty, env: Environment | None = None
+) -> tuple[Verdict, list[AbortReason]]:
     """返回 (判定, 全部中止原因)；判定为 DO 或 DEFERRED 时原因为空列表。
 
     真机上一条悬赏常同时卡在多道门上，旧版只返回首个会静默丢弃其余阻断；这里按
     旧版优先级全部收集，列表首个仍是旧版返回值（``primary_reason`` 兼容层）。
+
+    ``env`` 是设备环境快照（已装包 / 已登录包 / 账号是否新号 / 名字→包名映射）。
+    传入后守卫层会先问「这个门槛在环境层面是否已经满足」再开火：已装的 App 不再
+    判缺前置、任务目标 App 的下载/安装属于任务本身、已登录的 App 不再判 NEEDS_LOGIN、
+    人工确认的新号不再判人群门槛。``env is None`` 时以上环境修正全部关闭；与设备
+    无关的前序依赖规则（``NEEDS_PREREQUISITE``）是独立文本事实，任何调用都生效。
 
     低赏金是性价比结论，不是可行性结论，两者不该抢同一个枚举位：LOW_REWARD
     放在所有其它判定之后，只有没有任何其它中止原因时才作为最后理由返回。
@@ -112,6 +320,7 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
     优先级说明：
 
     - 伦理/地区红牌照常先判：它们来自结构化字段（或明确文本），不会被步骤变多改写；
+    - 前序依赖紧跟在伦理之后：它是「这单本身做不了」，不能被环境修正豁免；
     - 微信/支付宝/登录/第三方 App 等关键词命中照常中止：预览里的步骤是完整步骤的
       子集，加步骤只会增加命中，不会让已出现的门槛消失。命中多族时全部保留；
     - 完成条件词（试玩/助力/答题/看视频/进群）只在标题/类型/报名条件里出现、步骤里
@@ -129,6 +338,9 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
     if reason is not None:
         reasons.append(reason)
 
+    if _has_prerequisite(bounty):
+        reasons.append(AbortReason.NEEDS_PREREQUISITE)
+
     text = " ".join(bounty.step_texts)
     if any(term in text for term in _ALIPAY_TERMS):
         reasons.append(AbortReason.NEEDS_ALIPAY)
@@ -139,20 +351,29 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
     # 登录态判定必须排在第三方 App 之前：下载类步骤几乎都会命中「下载/安装」，
     # 若先判 App，会把「下载后凭新用户身份做任务」错误归因为 App 门槛。
     login_text = _login_text(bounty)
-    if (
+    login_triggered = (
         any(term in login_text for term in _LOGIN_EXPLICIT_TERMS)
         or any(term in login_text for term in _AUDIENCE_TERMS)
         or any(term in login_text for term in _LOGIN_ACTION_TERMS)
-    ):
-        reasons.append(AbortReason.NEEDS_LOGIN)
-    if (
-        any(term in text for term in _THIRD_PARTY_TERMS)
-        or any(app in text for app in _THIRD_PARTY_APPS)
-        or any(
-            match.group(1) not in _BROWSER_WHITELIST
-            for match in _OPEN_APP_PATTERN.finditer(text)
+    )
+    if login_triggered:
+        audience_triggered = any(term in login_text for term in _AUDIENCE_TERMS)
+        if env is None or not _login_satisfied(login_text, env):
+            reasons.append(AbortReason.NEEDS_LOGIN)
+        elif audience_triggered and not _audience_satisfied(login_text, env):
+            reasons.append(AbortReason.NEEDS_LOGIN)
+    if env is None:
+        third_party = (
+            any(term in text for term in _THIRD_PARTY_TERMS)
+            or any(app in text for app in _THIRD_PARTY_APPS)
+            or any(
+                match.group(1) not in _BROWSER_WHITELIST
+                for match in _OPEN_APP_PATTERN.finditer(text)
+            )
         )
-    ):
+    else:
+        third_party = _needs_third_party_app(bounty, env)
+    if third_party:
         reasons.append(AbortReason.NEEDS_THIRD_PARTY_APP)
 
     # 第二段门槛：装得上 ≠ 装完即完成。标题/类型里点名了完成动作、步骤里却没有

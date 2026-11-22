@@ -3,7 +3,7 @@
 import unittest
 
 from zrb_agent.guard.ethics import DEVICE_REGION, check_ethics
-from zrb_agent.guard.feasibility import check_feasibility, primary_reason
+from zrb_agent.guard.feasibility import Environment, check_feasibility, primary_reason
 from zrb_agent.schema import AbortReason, Bounty, ReasonKind, Verdict
 
 
@@ -277,6 +277,136 @@ class MultiReasonTest(unittest.TestCase):
         self.assertIs(AbortReason.NEEDS_LOGIN.kind, ReasonKind.ENVIRONMENT)
         self.assertIs(AbortReason.NEEDS_WECHAT.kind, ReasonKind.PLATFORM)
         self.assertIs(AbortReason.REGION_REJECTED.kind, ReasonKind.RED_LINE)
+
+
+class EnvironmentGuardTest(unittest.TestCase):
+    """环境入参：已装/已登录/新号证据满足时不再开火；说不清的仍保守拦截。"""
+
+    QIDIAN = "com.qidian.QDReader"
+    XHS = "com.xingin.xhs"
+    DRAGON = "com.dragon.read"
+    DEWU = "com.shizhuang.duapp"
+
+    def env(self, installed=(), logged_in=(), account_is_new=None):
+        return Environment(
+            installed=frozenset(installed),
+            logged_in=frozenset(logged_in),
+            account_is_new=account_is_new or {},
+            name_to_pkg={"起点读书": self.QIDIAN, "小红书": self.XHS,
+                         "番茄": self.DRAGON, "番茄小说": self.DRAGON,
+                         "得物": self.DEWU},
+        )
+
+    def check(self, steps, env, **fields):
+        return check_feasibility(make_bounty(steps, **fields), env)
+
+    def test_environment_gates_all_satisfied_becomes_do(self):
+        # 环境维度（装好 + 已登录 + 新号）全部有证据时，环境类门槛不得再开火。
+        steps = ["应用商店下载：起点读书，手机号登录，打开精选页面截图"]
+        env = self.env(installed=[self.QIDIAN], logged_in=[self.QIDIAN],
+                       account_is_new={self.QIDIAN: True})
+        self.assertEqual(self.check(steps, env, type="新用户", reward=1.28),
+                         (Verdict.DO, []))
+        # 方向测试：不传 env 仍是旧判断，环境修正不能悄悄改变默认行为。
+        self.assertEqual(check_reasons(steps, type="新用户", reward=1.28)[1],
+                         [AbortReason.NEEDS_LOGIN, AbortReason.NEEDS_THIRD_PARTY_APP])
+
+    def test_completion_gate_is_independent_of_environment(self):
+        # #75 的第二段门槛不归环境管：真机标题是「【起点读书】 纯助力」，
+        # 步骤没写助力，环境再全也不能替 planner 补出完成动作。
+        env = self.env(installed=[self.QIDIAN], logged_in=[self.QIDIAN],
+                       account_is_new={self.QIDIAN: True})
+        verdict, reasons = self.check(
+            ["应用商店下载：起点读书，手机号登录，打开精选页面截图"],
+            env, title="【起点读书】 纯助力", type="新用户", reward=1.28)
+        self.assertEqual((verdict, reasons),
+                         (Verdict.ABORT, [AbortReason.COMPLETION_UNSPECIFIED]))
+
+    def test_downloading_the_task_target_is_not_missing_prerequisite(self):
+        # 与 #74 的【仙遇】同款：要下载的 App 就是标题主体，且不在任何词表里。
+        bounty = Bounty("t", "【仙遇】", 3.0, [
+            "浏览器打开链接，直接下载安装，选择上方apk按键，找到“仙遇”，点击下载"],
+            allowed_regions=[], forbidden_regions=[])
+        self.assertEqual(check_feasibility(bounty, self.env()), (Verdict.DO, []))
+
+    def test_installed_app_is_not_missing(self):
+        self.assertEqual(check_reasons(["复制口令打开得物弹窗"])[1],
+                         [AbortReason.NEEDS_THIRD_PARTY_APP])
+        self.assertEqual(self.check(["复制口令打开得物弹窗"],
+                                    self.env(installed=[self.DEWU])), (Verdict.DO, []))
+
+    def test_missing_or_unresolved_app_still_blocked(self):
+        self.assertEqual(self.check(["复制口令打开得物弹窗"], self.env()),
+                         (Verdict.ABORT, [AbortReason.NEEDS_THIRD_PARTY_APP]))
+        # 只说「下载」不点名对象：不知道装的是不是已装的那个，仍算缺件。
+        verdict, reasons = self.check(
+            ["复制网址到浏览器打开下载", "倒计时结束点击立即打卡"],
+            self.env(installed=[self.QIDIAN]))
+        self.assertIs(verdict, Verdict.ABORT)
+        self.assertIn(AbortReason.NEEDS_THIRD_PARTY_APP, reasons)
+
+    def test_page_noun_is_not_another_app(self):
+        # D1：精选是该 App 内部 tab，不是要打开的第三方 App；只有环境口径生效。
+        steps = ["打开精选页面截图", "截图上传"]
+        self.assertEqual(feasibility(steps), (Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP))
+        self.assertEqual(self.check(steps, self.env()), (Verdict.DO, []))
+
+    def test_logged_in_app_satisfies_login_gate(self):
+        steps = ["复制链接打开小红书助力", "截图上传"]
+        self.assertEqual(feasibility(steps), (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+        self.assertEqual(self.check(steps, self.env(installed=[self.XHS],
+                                                   logged_in=[self.XHS])),
+                         (Verdict.DO, []))
+
+    def test_other_named_app_not_logged_in_still_blocks(self):
+        steps = ["打开小红书助力", "再打开番茄小说截图"]
+        env = self.env(installed=[self.XHS, self.DRAGON], logged_in=[self.XHS])
+        self.assertEqual(self.check(steps, env)[1], [AbortReason.NEEDS_LOGIN])
+
+    def test_new_account_satisfies_audience_gate_only_with_evidence(self):
+        steps = ["应用商店下载：起点读书，手机号登录，打开精选页面截图"]
+        logged_in = self.env(installed=[self.QIDIAN], logged_in=[self.QIDIAN])
+        self.assertEqual(self.check(steps, logged_in, type="新用户")[1],
+                         [AbortReason.NEEDS_LOGIN])
+        confirmed = self.env(installed=[self.QIDIAN], logged_in=[self.QIDIAN],
+                             account_is_new={self.QIDIAN: True})
+        self.assertEqual(self.check(steps, confirmed, type="新用户"), (Verdict.DO, []))
+
+    def test_empty_environment_is_unknown_not_installed(self):
+        # 空 Environment 是「不知道」，不能当成「没装/没登录」的反向证据。
+        verdict, reasons = check_feasibility(
+            make_bounty(["应用商店下载：起点读书，手机号登录"]), Environment())
+        self.assertEqual(reasons, [AbortReason.NEEDS_LOGIN,
+                                   AbortReason.NEEDS_THIRD_PARTY_APP])
+
+
+class PrerequisiteTest(unittest.TestCase):
+    """前序依赖：先做前几天才能领，这单本身不可做；环境满足也不能放行。"""
+
+    def test_third_day_blocked_even_when_environment_satisfies_all_gates(self):
+        bounty = make_bounty(["点链接打开小红书", "领取第三天的45星琼"], reward=1.11)
+        env = Environment(
+            installed=frozenset({"com.xingin.xhs"}),
+            logged_in=frozenset({"com.xingin.xhs"}),
+            name_to_pkg={"小红书": "com.xingin.xhs"},
+        )
+        verdict, reasons = check_feasibility(bounty, env)
+        self.assertIs(verdict, Verdict.ABORT)
+        self.assertEqual(reasons[0], AbortReason.NEEDS_PREREQUISITE)
+
+    def test_prerequisite_reads_limite_not_only_steps(self):
+        # 【百度推荐官】的「后续比这个赏金高」只出现在 limite。
+        self.assertEqual(check_reasons(["打开百度APP"], limite="后续比这个赏金高")[1],
+                         [AbortReason.NEEDS_PREREQUISITE])
+
+    def test_marketing_afterwards_is_not_prerequisite(self):
+        # 【cpb会员中心】「不错过后续福利」是营销话术，不认光秃秃的「后续」。
+        reasons = check_reasons(["扫码助力这个号，不错过后续福利"])[1]
+        self.assertNotIn(AbortReason.NEEDS_PREREQUISITE, reasons)
+        self.assertIn(AbortReason.NEEDS_WECHAT, reasons)
+
+    def test_prerequisite_has_its_own_kind(self):
+        self.assertIs(AbortReason.NEEDS_PREREQUISITE.kind, ReasonKind.PREREQUISITE)
 
 
 class TwoPhasePreviewTest(unittest.TestCase):

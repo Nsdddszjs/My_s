@@ -64,6 +64,8 @@ class AbortReason(Enum):
     # 标题/类型点名了完成动作（试玩、助力、答题等），步骤里却没有对应动作：
     # 装完或按步骤做完不等于达标，属于「完成条件未在步骤中说明」。
     COMPLETION_UNSPECIFIED = "COMPLETION_UNSPECIFIED"
+    # 任务要求先完成前几天的活动/前置任务：这单本身做不了，不是环境缺件。
+    NEEDS_PREREQUISITE = "NEEDS_PREREQUISITE"
     UNKNOWN_REWARD = "UNKNOWN_REWARD"
     LOW_REWARD = "LOW_REWARD"
     UNKNOWN_STEPS = "UNKNOWN_STEPS"
@@ -75,10 +77,12 @@ class AbortReason(Enum):
 
 
 class ReasonKind(Enum):
-    """阻断归因分组：环境缺件 / 平台硬门槛 / 红线 / 数据不足 / 性价比结论。"""
+    """阻断归因分组：环境缺件 / 平台硬门槛 / 前置依赖 / 红线 / 数据不足 / 性价比结论。"""
 
     ENVIRONMENT = "ENVIRONMENT"
     PLATFORM = "PLATFORM"
+    # 前序依赖不是「设备缺件」：装什么、登录谁都无法解开，只能换一单。
+    PREREQUISITE = "PREREQUISITE"
     RED_LINE = "RED_LINE"
     DATA = "DATA"
     ECONOMIC = "ECONOMIC"
@@ -95,6 +99,7 @@ _REASON_KINDS = {
     AbortReason.NEEDS_LOGIN: ReasonKind.ENVIRONMENT,
     AbortReason.NEEDS_THIRD_PARTY_APP: ReasonKind.ENVIRONMENT,
     AbortReason.COMPLETION_UNSPECIFIED: ReasonKind.DATA,
+    AbortReason.NEEDS_PREREQUISITE: ReasonKind.PREREQUISITE,
     AbortReason.UNKNOWN_REGIONS: ReasonKind.DATA,
     AbortReason.UNKNOWN_REWARD: ReasonKind.DATA,
     AbortReason.UNKNOWN_STEPS: ReasonKind.DATA,
