@@ -121,6 +121,94 @@ class ClassifyTest(unittest.TestCase):
         self.assertIsNone(target)
 
 
+class RunInstallTest(unittest.TestCase):
+    """run_install 的成功判定：必须由「新包」证明，不能只看 InstallSuccess。"""
+
+    class FakeDevice:
+        def __init__(self, packages: list[set[str]], xmls: list[str],
+                     activities: list[str]):
+            self._packages = list(packages)
+            self._xmls = list(xmls)
+            self._activities = list(activities)
+            self._i = 0
+            self.taps: list[tuple[int, int]] = []
+            self.urls: list[str] = []
+
+        def open_url(self, url):
+            self.urls.append(url)
+
+        def _run(self, args):
+            if args[:3] == ["shell", "am", "force-stop"]:
+                self.reset_calls = getattr(self, "reset_calls", 0) + 1
+                return ""
+            index = min(self._i, len(self._packages) - 1)
+            return "\n".join(f"package:{p}" for p in self._packages[index])
+
+        def dump_ui(self, path="ui.xml"):
+            source = self._xmls[min(self._i, len(self._xmls) - 1)]
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(source)
+
+        def current_focus(self):
+            return self._activities[min(self._i, len(self._activities) - 1)]
+
+        def tap(self, x, y):
+            self.taps.append((x, y))
+            self._i += 1
+
+    def _run(self, device):
+        from zrb_agent.d_class import run_install
+        clock = {"t": 0.0}
+
+        def fake_now():
+            return clock["t"]
+
+        def fake_sleep(seconds):
+            clock["t"] += seconds
+
+        return run_install(device, "手心输入法", poll_s=2.0, timeout_s=30,
+                           sleep=fake_sleep, now=fake_now)
+
+    def test_stale_install_success_page_is_not_success(self):
+        # 上一次跑完停在 InstallSuccess：本次第一次 dump 就看到它，但什么都没点。
+        # 修前会报 ok=True（实测 20.5s「装好」但 pm list 里没有）。
+        dev = self.FakeDevice(
+            packages=[set(), set()],
+            xmls=[xml([("手心输入法", "bt_multifunc")])],
+            activities=["com.android.packageinstaller.InstallSuccess"],
+        )
+        out = self._run(dev)
+        self.assertFalse(out.ok, "没装到东西不能报成功")
+        self.assertIn("未检测到新包", out.detail)
+
+    def test_success_requires_new_package(self):
+        dev = self.FakeDevice(
+            packages=[set(), {"com.xinshuru.inputmethod"}],
+            xmls=[xml([("手心输入法", "bt_multifunc")]),
+                  xml([])],
+            activities=["com.heytap.market.search.core.activity.SearchActivity",
+                        "com.android.packageinstaller.InstallSuccess"],
+        )
+        out = self._run(dev)
+        self.assertTrue(out.ok)
+        self.assertIn("com.xinshuru.inputmethod", out.detail)
+        self.assertIn("SEARCH@", out.trail[0])
+
+    def test_opens_market_search_uri(self):
+        dev = self.FakeDevice(packages=[set(), set()],
+                              xmls=[xml([])], activities=[""])
+        self._run(dev)
+        self.assertEqual(dev.urls[0],
+                         "market://search?q=%E6%89%8B%E5%BF%83%E8%BE%93%E5%85%A5%E6%B3%95")
+
+    def test_resets_leftover_installer_window(self):
+        # 上一次的 InstallSuccess 窗口会抢回焦点；开跑前必须 force-stop 掉它
+        dev = self.FakeDevice(packages=[set(), set()],
+                              xmls=[xml([])], activities=[""])
+        self._run(dev)
+        self.assertGreaterEqual(getattr(dev, "reset_calls", 0), 1)
+
+
 class DriverTest(unittest.TestCase):
     def test_same_state_tapped_only_once(self):
         # 坑 1：下载期间按钮不变，连点会重复触发安装
