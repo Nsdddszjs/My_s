@@ -87,19 +87,27 @@ class Runner:
         self._log(Action("点立即报名", ActionType.TAP, {"x": enroll.center[0],
                      "y": enroll.center[1]}, "进入步骤页"), 0, True, "已点击报名")
         history: list[Action] = []
-        for index, text in enumerate(bounty.steps, 1):
-            if (result := self._step(index, text, bounty, history)) is not None:
+        for index, step in enumerate(bounty.steps, 1):
+            if (result := self._step(index, step, bounty, history)) is not None:
                 return result
         self.phase = Phase.REPORT
         return {"phase": "DONE"}
 
-    def _step(self, index: int, text: str, bounty, history: list[Action]) -> dict | None:
+    def _step(
+        self,
+        index: int,
+        step,  # schema.Step：text / needs_capture / has_text_input
+        bounty,
+        history: list[Action],
+    ) -> dict | None:
         failures = 0
         while failures < 2:
             if self.actions >= self.max_steps:
                 return self._finish(index, "MAX_STEPS")
             page, before = self._screen()
-            action = self.plan_fn(page, text, history, bounty.title)
+            # step 可能是 Step，也可能是被调用方直接塞进来的纯字符串。
+            step_text = step.text if hasattr(step, 'text') else str(step)
+            action = self.plan_fn(page, step_text, history, bounty.title)
             if action.validate():
                 return self._abort("INVALID_ACTION")
             if action.action is ActionType.FINISH:

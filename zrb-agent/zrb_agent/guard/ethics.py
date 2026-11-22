@@ -21,7 +21,7 @@ _SURVEY_TERMS = ("调查", "问卷", "IPSOS", "标准答案")
 _VPN_TERMS = ("ip调到", "IP调到")
 
 def _identity_text(bounty: Bounty) -> str:
-    text = " ".join(p for p in (bounty.limite, *bounty.steps) if p)
+    text = " ".join(p for p in (bounty.limite, *bounty.step_texts) if p)
     for label in _CATEGORY_LABELS:
         text = text.replace(label, "")
     return text
@@ -45,7 +45,7 @@ def check_ethics(bounty: Bounty) -> AbortReason | None:
         return AbortReason.REGION_REJECTED
     if bounty.allowed_regions and DEVICE_REGION not in bounty.allowed_regions:
         return AbortReason.REGION_REJECTED
-    text = " ".join(bounty.steps)
+    text = " ".join(bounty.step_texts)
     if any(term in text for term in _VPN_TERMS):
         return AbortReason.REQUIRES_VPN
     ident_text = _identity_text(bounty)
