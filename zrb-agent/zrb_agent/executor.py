@@ -104,9 +104,18 @@ def _image_nodes(xml_text: str) -> list[tuple[tuple[int, int, int, int], tuple[i
 class Executor:
     """把 Action 落到 adb 上；任何失败都转成 ExecResult，不向调用方抛异常。"""
 
-    def __init__(self, device, on_record: Callable[[dict], None] | None = None):
+    def __init__(
+        self,
+        device,
+        on_record: Callable[[dict], None] | None = None,
+        human: Callable[[str, dict], str | None] | None = None,
+    ):
         self.device = device
         self.on_record = on_record
+        # 人工通道：reason/params -> 人提供的内容（如验证码）；None 表示放弃。
+        # 不传时 ask_human 只回报 NEEDS_HUMAN，与之前完全一致。
+        self.human = human
+        self.answers: list[dict] = []
         # screen_size() 每次都要起 adb 进程，这里只读一次；旋转屏幕后手动刷新。
         self._screen_size: tuple[int, int] = device.screen_size()
 
@@ -211,7 +220,19 @@ class Executor:
         return ExecStatus.OK, f"选择第 {index} 张图片 @({x},{y})"
 
     def _do_ask_human(self, params: dict) -> tuple[ExecStatus, str]:
-        return ExecStatus.NEEDS_HUMAN, str(params.get("reason", "")) or "需要人工介入"
+        reason = str(params.get("reason", "")) or "需要人工介入"
+        if self.human is None:
+            return ExecStatus.NEEDS_HUMAN, reason
+        try:
+            answer = self.human(reason, params)
+        except Exception as error:  # noqa: BLE001 - 人工通道异常不该让执行层崩
+            return ExecStatus.FAILED, f"人工通道异常：{type(error).__name__}: {error}"
+        if answer is None or answer == "":
+            return ExecStatus.NEEDS_HUMAN, f"{reason}（人工未提供内容）"
+        answer = str(answer)
+        self.answers.append({"reason": reason, "answer": answer})
+        # detail 只报长度：执行日志不该出现验证码一类的内容。
+        return ExecStatus.OK, f"人工已提供内容（{len(answer)} 字符）"
 
     def _do_finish(self, params: dict) -> tuple[ExecStatus, str]:
         return ExecStatus.FINISHED, str(params.get("reason", "")) or "任务结束"

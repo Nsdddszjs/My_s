@@ -266,3 +266,54 @@ class ExecutorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AskHumanHookTest(unittest.TestCase):
+    """人工通道钩子：不接通道时行为不变，接了之后能把内容收回来。"""
+
+    def _executor(self, human):
+        return Executor(FakeDevice(), human=human)
+
+    def test_no_hook_keeps_needs_human(self):
+        result = self._executor(None).execute(make_action("ask_human", reason="要验证码"))
+        self.assertEqual(result.status, ExecStatus.NEEDS_HUMAN)
+        self.assertEqual(result.detail, "要验证码")
+
+    def test_hook_answer_returns_ok(self):
+        seen = {}
+
+        def human(reason, params):
+            seen["reason"] = reason
+            seen["params"] = params
+            return "123456"
+
+        executor = self._executor(human)
+        result = executor.execute(make_action("ask_human", reason="要验证码"))
+        self.assertEqual(result.status, ExecStatus.OK)
+        self.assertIn("6 字符", result.detail)
+        self.assertNotIn("123456", result.detail, "detail 不该出现明文")
+        self.assertEqual(seen["reason"], "要验证码")
+        self.assertEqual([a["answer"] for a in executor.answers], ["123456"])
+
+    def test_hook_none_means_give_up(self):
+        result = self._executor(lambda reason, params: None).execute(
+            make_action("ask_human", reason="要验证码"))
+        self.assertEqual(result.status, ExecStatus.NEEDS_HUMAN)
+        self.assertIn("人工未提供内容", result.detail)
+
+    def test_hook_exception_does_not_crash(self):
+        def boom(reason, params):
+            raise TimeoutError("超时")
+
+        result = self._executor(boom).execute(make_action("ask_human", reason="要验证码"))
+        self.assertEqual(result.status, ExecStatus.FAILED)
+        self.assertIn("TimeoutError", result.detail)
+
+    def test_hook_receives_params(self):
+        got = {}
+
+        def human(reason, params):
+            got.update(params)
+            return "ok"
+
+        self._executor(human).execute(make_action("ask_human", reason="r", app="起点读书"))
+        self.assertEqual(got.get("app"), "起点读书")
