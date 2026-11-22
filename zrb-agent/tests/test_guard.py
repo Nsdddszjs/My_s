@@ -205,6 +205,40 @@ class FeasibilityGuardTest(unittest.TestCase):
         self.assertNotIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
     def test_completion_reason_kind_is_data(self):
         self.assertIs(AbortReason.COMPLETION_UNSPECIFIED.kind, ReasonKind.DATA)
+    def test_merchant_brand_name_is_not_a_completion_source(self):
+        # Issue #77【嘟助力】/【微店助力1121】：品牌名里带「助力」，type/limite
+        # 根本没提，步骤里也不再出现——这是商家名噪声，不是完成条件缺口。
+        for title, steps, fields in (
+            ("【嘟助力】",
+             ["抖音扫码，打开页面后按提示操作"],
+             {"type": "支付1元或1.99元订购会员", "limite": "人人都可以"}),
+            ("【微店助力1121】",
+             ["打开微店，左上角点一下，在左上角扫码"],
+             {"type": "简单"}),
+        ):
+            with self.subTest(title=title):
+                _, reasons = check_reasons(steps, title=title, reward=1.0, **fields)
+                self.assertNotIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
+    def test_title_alone_is_not_a_completion_source(self):
+        # 标题里的动作词不能单独判缺口：没有「步骤只剩下载安装」这个事实就不开火。
+        _, reasons = check_reasons(["截图上传"], title="测试纯助力", reward=1.0)
+        self.assertNotIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
+    def test_install_only_steps_with_brand_action_still_blocked(self):
+        # Issue #77【微店新星助力】：type 只写「微店」，步骤只写「提前下载微店 +
+        # 扫一扫」；标题里的「助力」说明装完还有后续动作，步骤没写。这条是真缺口，
+        # 必须仍命中——它靠「步骤只剩安装」判，不是靠品牌名当完成条件来源。
+        _, reasons = check_reasons(
+            ["提前下载微店，点击左上角3个杠，扫一扫"],
+            title="【微店新星助力】", reward=0.51, type="微店")
+        self.assertIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
+    def test_completion_synonym_in_steps_is_not_flagged(self):
+        # Issue #77【MSpace】：type 写「简单助力，点个赞就完成」，步骤写
+        # 「…全程只需要30秒体验完成」——完成条件用同义表述写了，不能判缺口。
+        _, reasons = check_reasons(
+            ["微信或者浏览器扫码打开网页(全程只需要30秒体验完成)"],
+            title="【MSpace】", reward=1.0,
+            type="简单助力，点个赞就完成", limite="仅限新用户")
+        self.assertNotIn(AbortReason.COMPLETION_UNSPECIFIED, reasons)
     def test_do(self):
         self.assertEqual(feasibility(["截图上传"], reward=1.0), (Verdict.DO, None))
     def test_region_beats_survey_in_feasibility(self):
