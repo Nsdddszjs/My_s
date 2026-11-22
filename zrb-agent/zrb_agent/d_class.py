@@ -187,6 +187,23 @@ def installed_packages(device) -> frozenset[str]:
     )
 
 
+INSTALLER_PACKAGE = "com.android.packageinstaller"
+
+
+def reset_installer(device) -> None:
+    """开跑前清掉可能残留的系统安装器窗口。
+
+    实测：上一次安装结束停在 `InstallSuccess`，那个 Activity 会一直活着；
+    即使按 HOME 回到桌面，下一次 `open_url` 之后它又会抢回焦点。
+    于是本次一次都没装东西，`current_focus()` 却报 `InstallSuccess` ——
+    只看页面判成功就会假成功（20.5 秒「装好」但 `pm list` 里没有）。
+    """
+    try:
+        device._run(["shell", "am", "force-stop", INSTALLER_PACKAGE])
+    except RuntimeError:
+        pass
+
+
 def run_install(
     device,
     app_name: str,
@@ -202,8 +219,13 @@ def run_install(
     只做「装 App」这一段。装完还要登录的（实测 21 条 D 类里 6 条是这样）
     不在本模板范围内 —— 那需要 OTP，必须由人给码，调用方拿到 `ok=True`
     之后应当再感知一次首启页，看到手机号登录墙就 `ask_human`。
+
+    **成功必须由「新包」证明，不能只看 InstallSuccess 页面**：
+    上一次运行结束时若停在 `InstallSuccess`，本次第一次 dump 就会看到它，
+    于是什么都没做也报成功。实测踩过 —— 20.5 秒「装好」但 `pm list` 里没有。
     """
     driver = InstallDriver(want=app_name)
+    reset_installer(device)
     before = installed_packages(device)
     started = now()
     trail: list[str] = []
@@ -236,6 +258,12 @@ def run_install(
         except RuntimeError:
             pass
 
+        # 页面停在 InstallSuccess 但本次一次都没点过 → 是上一次运行残留，
+        # 不能当成功；跳出去重新进入搜索页。
+        if ("InstallSuccess" in activity
+                and not any(driver.tapped.values())):
+            activity = ""
+
         state, target = driver.step(parse_ui_xml(xml_text), activity)
         trail.append(f"{state.value}@{int(now() - started)}s")
 
@@ -243,11 +271,18 @@ def run_install(
             break
         if target is not None:
             device.tap(*target.center)
-            sleep(poll_s)
+        # 无论点没点都要等一轮：不点的时候若也不 sleep，循环会空转，
+        # 超时判断基于 wall clock 就永远不前进（写单测时直接死循环，实测）。
+        sleep(poll_s)
 
     new = installed_packages(device) - before
-    ok = driver.done or bool(new)
-    detail = f"新增包：{', '.join(sorted(new))}" if new else "未检测到新包"
+    ok = bool(new)
+    if new:
+        detail = f"新增包：{', '.join(sorted(new))}"
+    elif driver.done:
+        detail = "页面显示安装成功但未检测到新包（可能是上一次运行留下的 InstallSuccess）"
+    else:
+        detail = "未检测到新包"
     return InstallOutcome(ok=ok, state=driver.history[-1] if driver.history
                           else InstallState.UNKNOWN,
                           elapsed_s=round(now() - started, 1),
