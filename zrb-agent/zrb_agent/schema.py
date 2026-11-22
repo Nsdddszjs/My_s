@@ -61,8 +61,9 @@ class AbortReason(Enum):
     # 任务动作需要登录态（账号/手机号/短信验证码）才能完成。
     NEEDS_LOGIN = "NEEDS_LOGIN"
     NEEDS_THIRD_PARTY_APP = "NEEDS_THIRD_PARTY_APP"
-    # 标题/类型点名了完成动作（试玩、助力、答题等），步骤里却没有对应动作：
-    # 装完或按步骤做完不等于达标，属于「完成条件未在步骤中说明」。
+    # 类型/报名条件点名了完成动作（试玩、助力、答题等），步骤里却没有对应动作：
+    # 装完或按步骤做完不等于达标，属于「完成条件未在步骤中说明」。标题里的商家
+    # 品牌名不是来源，只在步骤只剩下载安装时作为「还有后续动作」的线索。
     COMPLETION_UNSPECIFIED = "COMPLETION_UNSPECIFIED"
     # 任务要求先完成前几天的活动/前置任务：这单本身做不了，不是环境缺件。
     NEEDS_PREREQUISITE = "NEEDS_PREREQUISITE"

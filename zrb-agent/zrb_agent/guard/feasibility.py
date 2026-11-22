@@ -93,16 +93,66 @@ _AUDIENCE_TERMS = (
     "每个手机号一次", "一个手机号一次", "勿多账号", "仅限新玩家",
 )
 
-# 完成动作词：标题/类型/报名条件点名了「装完之后还要做什么」，但步骤只写到下载安装。
+# 完成动作词：类型/报名条件点名了「装完之后还要做什么」，但步骤只写到下载安装。
 # 悬赏主按标题验收，planner 按步骤执行完就停手，会「做完了却拿不到赏金」且
-# 不报错。这里只把标题/类型里出现、步骤里缺席的动作显式标出来，至少不静默放行。
+# 不报错。这里只把类型/报名条件里出现、步骤里缺席的动作显式标出来，至少不静默放行。
+# 标题（``【商家名】 运营标签``）不是常规来源：商家品牌名里带「助力」时，步骤原文
+# 当然不会重复那个词，把品牌名当来源必然假阳性（Issue #77）。
 _COMPLETION_ACTION_TERMS = ("试玩", "助力", "答题", "看视频", "进群")
+
+# 安装类动作：这些动作只是「拿到 App」，本身不等于完成任务。步骤里只有它们时，
+# 后面的完成动作很可能没写进步骤（#69 的 D 类缺口）。
+_INSTALL_ACTION_TERMS = ("下载", "安装", "应用商店", "应用市场", "apk")
+
+# 步骤自己已经交代了「什么算完成」的同义表述：此时不能再判「完成条件没写」。
+# 例：【MSpace】type 写「简单助力，点个赞就完成」，步骤写「…全程只需要30秒
+# 体验完成」——完成条件写了，只是没重复「助力」二字（Issue #77）。
+_STEP_COMPLETION_EVIDENCE = (
+    "体验完成", "立即完成", "完成即可", "完成即", "即完成", "就算完成",
+)
 
 
 def _completion_text(bounty: Bounty) -> str:
-    """完成条件来源：标题、类型与报名条件（步骤原文用于对照，不参与拼装）。"""
-    return " ".join(
-        part for part in (bounty.title, bounty.type, bounty.limite) if part
+    """完成条件来源：任务类型与报名条件（步骤原文用于对照，不参与拼装）。
+
+    **不读标题**：``title`` 是「【商家品牌名】 运营标签」，品牌名里的动作词不是
+    完成条件（Issue #77 的 3 条假阳性都来自它）。标题只在步骤只剩下载安装时
+    作为「这单还有后续动作」的线索，见 :func:`_completion_unspecified`。
+    """
+    return " ".join(part for part in (bounty.type, bounty.limite) if part)
+
+
+def _completion_unspecified(bounty: Bounty) -> bool:
+    """步骤是否漏掉了完成动作，需要显式标出 ``COMPLETION_UNSPECIFIED``。
+
+    两条独立路径，都要求步骤不是大厅列表预览的截断：
+
+    1. 类型/报名条件点名了完成动作，步骤里没有对应动作；
+    2. 步骤只有下载/安装（拿到 App 就结束），而标题的运营标签点名了完成动作：
+       「装得上」不等于「装完即完成」。这一条不把标题当常规来源，只在步骤明确
+       停在安装时成立——品牌名假阳性单没有安装动作，不会命中。
+       【微店新星助力】是真缺口：步骤只写「提前下载微店 + 扫一扫」，标题里的
+       「助力」说明装完还有后续动作，而步骤没写（Issue #77）。
+
+    步骤已用「体验完成」等同义表述交代了完成条件时，两条都不成立。
+    """
+    steps_text = " ".join(bounty.step_texts)
+    if not steps_text.strip() or bounty.steps_incomplete:
+        return False
+    if any(evidence in steps_text for evidence in _STEP_COMPLETION_EVIDENCE):
+        return False
+    completion_text = _completion_text(bounty)
+    if any(
+        term in completion_text and term not in steps_text
+        for term in _COMPLETION_ACTION_TERMS
+    ):
+        return True
+    title = bounty.title or ""
+    return (
+        any(term in steps_text for term in _INSTALL_ACTION_TERMS)
+        and not any(term in completion_text for term in _COMPLETION_ACTION_TERMS)
+        and any(term in title for term in _COMPLETION_ACTION_TERMS)
+        and not any(term in steps_text for term in _COMPLETION_ACTION_TERMS)
     )
 
 
@@ -323,9 +373,10 @@ def check_feasibility(
     - 前序依赖紧跟在伦理之后：它是「这单本身做不了」，不能被环境修正豁免；
     - 微信/支付宝/登录/第三方 App 等关键词命中照常中止：预览里的步骤是完整步骤的
       子集，加步骤只会增加命中，不会让已出现的门槛消失。命中多族时全部保留；
-    - 完成条件词（试玩/助力/答题/看视频/进群）只在标题/类型/报名条件里出现、步骤里
+    - 完成条件词（试玩/助力/答题/看视频/进群）只在类型/报名条件里出现、步骤里
       没有对应动作时，追加 COMPLETION_UNSPECIFIED：按步骤做完不等于达标，不能静默放行。
-      该门依赖「步骤里缺什么」，预览步骤不完整时不判，留给完整步骤复判；
+      标题不是完成条件来源；步骤只剩下载安装时，标题里的动作词才作为「还有后续动作」
+      的线索。该门依赖「步骤里缺什么」，预览步骤不完整时不判，留给完整步骤复判；
     - UNKNOWN_REWARD / LOW_REWARD 照常返回：赏金是列表页字段事实，与步骤完整性无关；
     - 只要列表里已经有阻断，就返回 ABORT，不再因为预览不完整降级为 DEFERRED；
     - 只有当「步骤未知」或「本应判 DO」这两个依赖步骤完整性的结论出现时，才改为
@@ -376,19 +427,11 @@ def check_feasibility(
     if third_party:
         reasons.append(AbortReason.NEEDS_THIRD_PARTY_APP)
 
-    # 第二段门槛：装得上 ≠ 装完即完成。标题/类型里点名了完成动作、步骤里却没有
-    # 对应动作时，planner 按步骤执行到末尾会静默漏做；这里显式标出完成条件缺失。
+    # 第二段门槛：装得上 ≠ 装完即完成。完成动作从类型/报名条件里读，标题只在
+    # 步骤只剩下载安装时作为线索；planner 按步骤执行到末尾会静默漏做，这里显式标出。
     # 这个门看「步骤里缺什么」，不是「步骤里有什么」：大厅预览可能只给了第 1 步，
     # 缺动作可能只是截断，所以步骤不完整时不下结论，等报名后的完整步骤复判。
-    completion_text = _completion_text(bounty)
-    if (
-        text.strip()
-        and not bounty.steps_incomplete
-        and any(
-            term in completion_text and term not in text
-            for term in _COMPLETION_ACTION_TERMS
-        )
-    ):
+    if _completion_unspecified(bounty):
         reasons.append(AbortReason.COMPLETION_UNSPECIFIED)
 
     # 已有明确阻断就不 DEFERRED：预览步骤是完整步骤子集，补全只会增加命中。
