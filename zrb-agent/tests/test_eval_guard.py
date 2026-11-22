@@ -75,10 +75,10 @@ class EvalGuardCase(unittest.TestCase):
 
 
 class SeedFileTest(EvalGuardCase):
-    def test_seed_has_exactly_32_lines(self):
+    def test_seed_has_exactly_33_lines(self):
         raw_lines = SEED_PATH.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(raw_lines), 32)
-        self.assertEqual(len(eval_guard.load_seed(SEED_PATH)), 32)
+        self.assertEqual(len(raw_lines), 33)
+        self.assertEqual(len(eval_guard.load_seed(SEED_PATH)), 33)
 
     def test_reasons_parse_except_pure_in_app(self):
         # PURE_IN_APP 只是标注用途，不是真正的 AbortReason。
