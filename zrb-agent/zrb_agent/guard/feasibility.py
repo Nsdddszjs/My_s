@@ -76,7 +76,7 @@ def _completion_text(bounty: Bounty) -> str:
 def _login_text(bounty: Bounty) -> str:
     """把可能暴露登录态的三个来源拼成一段文本：type、limite 与步骤。"""
     return " ".join(
-        part for part in (bounty.type, bounty.limite, *bounty.steps) if part
+        part for part in (bounty.type, bounty.limite, *bounty.step_texts) if part
     )
 
 
@@ -129,7 +129,7 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
     if reason is not None:
         reasons.append(reason)
 
-    text = " ".join(bounty.steps)
+    text = " ".join(bounty.step_texts)
     if any(term in text for term in _ALIPAY_TERMS):
         reasons.append(AbortReason.NEEDS_ALIPAY)
     if "保存图片" in text:
@@ -174,7 +174,7 @@ def check_feasibility(bounty: Bounty) -> tuple[Verdict, list[AbortReason]]:
     if reasons:
         return Verdict.ABORT, reasons
 
-    steps = [step.strip() for step in bounty.steps if step.strip()]
+    steps = [step.strip() for step in bounty.step_texts if step.strip()]
     # 大厅预览只给 1 步时，步骤越少不一定越糟：报名后的完整步骤可能补上说清的动作。
     preview_incomplete = bounty.steps_incomplete and len(steps) <= 1
     # 只要有一条步骤说清了，这单就还能继续做，所以用 all 而不是 any；
