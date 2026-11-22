@@ -9,7 +9,7 @@ import inspect, os, sys, tempfile, unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zrb_agent import device as device_module
-from zrb_agent.guard.feasibility import check_feasibility
+from zrb_agent.guard.feasibility import check_feasibility, primary_reason
 from zrb_agent.perceive import build_page_state, classify_detail_page
 from zrb_agent.schema import AbortReason, Bounty, Verdict
 
@@ -58,7 +58,8 @@ def run_pipeline(xml_text: str, activity: str = ".DetailActivity"):
         steps=detail["steps_text"],
         # 地区必须来自感知层，不能手填——#37 之前这里永远是 []。
         restricted_regions=detail["restricted_regions_hint"])
-    return check_feasibility(bounty)
+    verdict, reasons = check_feasibility(bounty)
+    return verdict, primary_reason(reasons)
 
 
 class PerceiveToGuardTest(unittest.TestCase):

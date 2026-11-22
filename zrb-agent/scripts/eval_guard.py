@@ -21,7 +21,7 @@ _ZRB_AGENT_ROOT = Path(__file__).resolve().parents[1]
 if str(_ZRB_AGENT_ROOT) not in sys.path:
     sys.path.insert(0, str(_ZRB_AGENT_ROOT))
 
-from zrb_agent.guard.feasibility import check_feasibility  # noqa: E402
+from zrb_agent.guard.feasibility import check_feasibility, primary_reason  # noqa: E402
 from zrb_agent.schema import Bounty, Verdict  # noqa: E402
 
 DEFAULT_SEED = _ZRB_AGENT_ROOT / "evals" / "feasibility_seed_v2.jsonl"
@@ -101,7 +101,10 @@ def evaluate(rows):
     mismatch = []
 
     for row in rows:
-        verdict, reason = check_feasibility(build_bounty(row))
+        # 守卫层现在返回全部阻断原因；评测口径仍是旧版的「首个原因」，
+        # 这样新增原因不会改变既有种子的归因结果。
+        verdict, reasons = check_feasibility(build_bounty(row))
+        reason = primary_reason(reasons)
         label_do = row["verdict"] == "do"
         predicted_do = verdict is Verdict.DO
 

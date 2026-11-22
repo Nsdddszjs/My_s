@@ -3,8 +3,8 @@
 import unittest
 
 from zrb_agent.guard.ethics import DEVICE_REGION, check_ethics
-from zrb_agent.guard.feasibility import check_feasibility
-from zrb_agent.schema import AbortReason, Bounty, Verdict
+from zrb_agent.guard.feasibility import check_feasibility, primary_reason
+from zrb_agent.schema import AbortReason, Bounty, ReasonKind, Verdict
 
 
 def make_bounty(steps, reward=1.0, allowed_regions=(), forbidden_regions=(), **fields):
@@ -26,6 +26,13 @@ def ethics(steps, **kwargs):
 
 
 def feasibility(steps, **kwargs):
+    """旧版单原因口径：既有断言不用改，新增多原因断言直接用 check_reasons。"""
+    verdict, reasons = check_feasibility(make_bounty(steps, **kwargs))
+    return verdict, primary_reason(reasons)
+
+
+def check_reasons(steps, **kwargs):
+    """返回 (Verdict, list[AbortReason])，用于断言全部阻断原因。"""
     return check_feasibility(make_bounty(steps, **kwargs))
 
 
@@ -197,6 +204,46 @@ class FeasibilityGuardTest(unittest.TestCase):
                          (Verdict.ABORT, AbortReason.NEEDS_THIRD_PARTY_APP))
     def test_open_link_is_not_third_party_app(self):
         self.assertEqual(feasibility(["打开链接填写信息"]), (Verdict.DO, None))
+
+
+class MultiReasonTest(unittest.TestCase):
+    """一条悬赏同时卡在多道门上时，守卫层必须返回全部原因，不能只留首个。"""
+
+    def test_starting_point_reader_returns_both_gates(self):
+        # hall_dumps/审核快_016.xml【起点读书】：装 App 与手机号登录在同一句出现，
+        # 旧版只返回 NEEDS_LOGIN，第三方 App 那道门从返回值里消失。
+        verdict, reasons = check_reasons(
+            ["应用商店下载：起点读书，手机号登录，打开精选页面截图"])
+        self.assertEqual((verdict, reasons), (Verdict.ABORT, [
+            AbortReason.NEEDS_LOGIN, AbortReason.NEEDS_THIRD_PARTY_APP]))
+
+    def test_do_deferred_and_preview_gates(self):
+        self.assertEqual(check_reasons(["截图上传"]), (Verdict.DO, []))
+        self.assertEqual(check_reasons(["截图上传"], steps_incomplete=True),
+                         (Verdict.DEFERRED, []))
+        # 预览只给 1 步也是完整步骤的子集；多门已明确时不能降级成 DEFERRED。
+        verdict, reasons = check_reasons(["微信扫码下载登录"], steps_incomplete=True)
+        self.assertIs(verdict, Verdict.ABORT)
+        self.assertGreaterEqual(len(reasons), 2)
+
+    def test_real_corpus_samples_expose_multi_family_blockers(self):
+        # 51 条真机语料（real_pages.jsonl）里 42 条多族阻断，抽 3 条锁定。
+        samples = (
+            ("hall_dumps/b02.xml", ["应用商店下载ai荔枝"], {"type": "新用户"}),
+            ("hall_dumps/好通过_008.xml", ["扫码-我的-登录-手机号登录"], {}),
+            ("hall_dumps/好通过_017.xml", ["小红书扫码进去，点第一阶段"], {}),
+        )
+        for sample_id, steps, fields in samples:
+            with self.subTest(sample=sample_id):
+                verdict, reasons = check_reasons(steps, **fields)
+                self.assertIs(verdict, Verdict.ABORT)
+                self.assertGreaterEqual(len(reasons), 2, sample_id)
+
+    def test_reason_kind_groups_cover_every_reason(self):
+        self.assertEqual({reason.kind for reason in AbortReason}, set(ReasonKind))
+        self.assertIs(AbortReason.NEEDS_LOGIN.kind, ReasonKind.ENVIRONMENT)
+        self.assertIs(AbortReason.NEEDS_WECHAT.kind, ReasonKind.PLATFORM)
+        self.assertIs(AbortReason.REGION_REJECTED.kind, ReasonKind.RED_LINE)
 
 
 class TwoPhasePreviewTest(unittest.TestCase):
