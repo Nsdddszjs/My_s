@@ -281,6 +281,11 @@ def run_install(
             break
         if target is not None:
             device.tap(*target.center)
+        # 每轮直接查包：装完后焦点常常停在商店页/桌面，activity 不再是
+        # InstallSuccess，只靠页面判成功会空转到超时。
+        if installed_packages(device) - before:
+            trail.append(f"NEW_PACKAGE@{int(now() - started)}s")
+            break
         # 无论点没点都要等一轮：不点的时候若也不 sleep，循环会空转，
         # 超时判断基于 wall clock 就永远不前进（写单测时直接死循环，实测）。
         sleep(poll_s)
@@ -289,12 +294,14 @@ def run_install(
     ok = bool(new)
     if new:
         detail = f"新增包：{', '.join(sorted(new))}"
+        final_state = InstallState.SUCCESS
     elif driver.done:
         detail = "页面显示安装成功但未检测到新包（可能是上一次运行留下的 InstallSuccess）"
+        final_state = driver.history[-1] if driver.history else InstallState.UNKNOWN
     else:
         detail = "未检测到新包"
-    return InstallOutcome(ok=ok, state=driver.history[-1] if driver.history
-                          else InstallState.UNKNOWN,
+        final_state = driver.history[-1] if driver.history else InstallState.UNKNOWN
+    return InstallOutcome(ok=ok, state=final_state,
                           elapsed_s=round(now() - started, 1),
                           trail=trail, detail=detail)
 
@@ -485,18 +492,24 @@ def run_apk_link(
             break
         if target is not None:
             device.tap(*target.center)
+        # 每轮直接查包：装完后焦点常常回到浏览器黑页，activity 不再是
+        # InstallSuccess，只靠页面判成功会空转到超时（实测空转 170 秒）。
+        if installed_packages(device) - before:
+            trail.append(f"NEW_PACKAGE@{int(now() - started)}s")
+            break
         sleep(poll_s)
 
     new = installed_packages(device) - before
     ok = bool(new)
     if new:
         detail = f"新增包：{', '.join(sorted(new))}"
+        final_state = InstallState.SUCCESS
     elif driver.done:
         detail = "页面显示安装成功但未检测到新包（可能是上一次运行留下的 InstallSuccess）"
+        final_state = driver.history[-1] if driver.history else InstallState.UNKNOWN
     else:
         detail = "未检测到新包"
-    return InstallOutcome(ok=ok,
-                          state=driver.history[-1] if driver.history
-                          else InstallState.UNKNOWN,
+        final_state = driver.history[-1] if driver.history else InstallState.UNKNOWN
+    return InstallOutcome(ok=ok, state=final_state,
                           elapsed_s=round(now() - started, 1),
                           trail=trail, detail=detail)

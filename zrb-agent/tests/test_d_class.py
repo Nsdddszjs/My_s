@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from zrb_agent import d_class
 from zrb_agent.d_class import (InstallDriver, InstallState, classify,
@@ -9,6 +10,15 @@ from zrb_agent.d_class import (InstallDriver, InstallState, classify,
 from zrb_agent.perceive import parse_ui_xml
 
 PKG = "com.heytap.market"
+
+INSTALLER_XML = (
+    '<hierarchy><node text="微软必应" '
+    'resource-id="com.android.packageinstaller:id/app_name" '
+    'bounds="[700,1000][900,1030]"/>'
+    '<node text="安装" clickable="true" '
+    'resource-id="com.android.packageinstaller:id/install_confirm_ok" '
+    'bounds="[510,1610][640,1700]"/></hierarchy>'
+)
 
 
 def xml(rows: list[tuple[str, str]], extra: str = "") -> str:
@@ -423,3 +433,52 @@ class ApkPreconditionTest(unittest.TestCase):
         self.assertEqual(out.elapsed_s, 0.0)
         self.assertIn("同名文件", out.detail)
         self.assertEqual(dev.taps, 0)
+
+class EarlySuccessTest(unittest.TestCase):
+    """装完就该收工：装好后 activity 常常不是 InstallSuccess（实测空转 170 秒）。"""
+
+    def test_apk_link_stops_as_soon_as_package_appears(self) -> None:
+        class Dev:
+            def __init__(self) -> None:
+                self.pkgs: list[str] = []
+                self.taps = 0
+                self.clock = 0.0
+
+            def _run(self, args: list[str]) -> str:
+                if args[:2] == ["shell", "pm"]:
+                    return "".join(f"package:{p}\n" for p in self.pkgs)
+                if args[:2] == ["shell", "ls"]:
+                    return ""
+                return ""
+
+            def open_url(self, url: str) -> None:
+                pass
+
+            def dump_ui(self, path: str) -> None:
+                Path(path).write_text(INSTALLER_XML, encoding="utf-8")
+
+            def current_focus(self) -> str:
+                return "com.android.browser.BrowserActivity"
+
+            def tap(self, x: int, y: int) -> None:
+                self.taps += 1
+                # 点完「安装」之后包就出现了，但页面/焦点回到浏览器
+                self.pkgs.append("com.example.app")
+
+        dev = Dev()
+        clock = [0.0]
+
+        def fake_now() -> float:
+            clock[0] += 1.0
+            return clock[0]
+
+        def fake_sleep(_s: float) -> None:
+            pass
+
+        out = d_class.run_apk_link(
+            dev, "http://h/test.apk", dump_path="/tmp/_x.xml",
+            timeout_s=200.0, now=fake_now, sleep=fake_sleep)
+        self.assertTrue(out.ok)
+        self.assertIs(out.state, InstallState.SUCCESS)
+        self.assertLess(out.elapsed_s, 20.0, "新包出现就该收工，不能等满超时")
+        self.assertIn("NEW_PACKAGE", " ".join(out.trail))
