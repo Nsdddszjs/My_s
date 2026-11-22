@@ -12,12 +12,19 @@
 因此本模块把「当前处在哪个状态、这一次该点哪里」写成纯函数 + 一个
 「每个状态只推进一次」的驱动器，先在没有设备的情况下可断言，再交给
 `device` 执行。真实链路（手心输入法，37.7 秒装完）已真机验证过。
+
+两条通道：
+
+* **商店通道** ``run_install(device, app_name)``：`market://search` → 商店搜索
+  结果页挑行 → 商店免责弹窗（可选）→ 系统安装器 → 两次确认。
+* **外链直下通道** ``run_apk_link(device, url)``：``open_url`` 一个 .apk 直链
+  → 系统下载器 → **直接**弹系统安装器 → 一次确认。全程没有浏览器窗口。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from .perceive import UiElement, parse_ui_xml
 
@@ -44,6 +51,9 @@ class InstallState(Enum):
     DISCLAIMER = "DISCLAIMER"  # 商店自己的三方来源免责弹窗
     INSTALLER = "INSTALLER"    # 系统 PackageInstaller 确认页
     INSTALLING = "INSTALLING"  # 下载/安装进行中（点不出新东西）
+    # 外链直下 APK 通道专用：链接已经打开，但安装器还没出现（系统下载器在拉
+    # 文件）。和 INSTALLING 的区别是「连页面都还没到」，不是「点了没反应」。
+    DOWNLOADING = "DOWNLOADING"
     SUCCESS = "SUCCESS"        # 已在 InstallSuccess 页或目标包已装上
     UNKNOWN = "UNKNOWN"        # 既无可动作项也不在进行中，继续等
 
@@ -284,6 +294,209 @@ def run_install(
     else:
         detail = "未检测到新包"
     return InstallOutcome(ok=ok, state=driver.history[-1] if driver.history
+                          else InstallState.UNKNOWN,
+                          elapsed_s=round(now() - started, 1),
+                          trail=trail, detail=detail)
+
+APK_SUFFIX = ".apk"
+# 出现这些字样说明系统在问「是否允许此来源安装应用」，属于设备安全设置，
+# 必须 ask_human，不能自己点允许。
+_UNKNOWN_SOURCES_MARKERS = (
+    "安装未知应用", "未知来源", "允许来自此来源", "unknown sources",
+)
+
+
+def is_apk_link(url: str) -> bool:
+    """链接本身是不是一个 APK 直链（忽略 query 与大小写）。"""
+    return url.split("?", 1)[0].split("#", 1)[0].lower().endswith(APK_SUFFIX)
+
+
+def apk_file_name(url: str) -> str:
+    """URL 里最后一段路径 —— 也就是系统下载器存盘用的文件名。"""
+    path = urlsplit(url).path.rstrip("/")
+    return path.rsplit("/", 1)[-1] if path else ""
+
+
+DOWNLOAD_DIR = "/sdcard/Download"
+
+
+def download_exists(device, name: str) -> bool:
+    """下载目录里是否已经有同名文件。
+
+    实测：有同名文件时系统下载器**不会**再弹安装器，页面停在无字黑页，
+    模板会一直等到超时（实测 182.7 秒 45 轮全 DOWNLOADING）。
+    所以要提前查，而不是等超时才发现。
+    """
+    if not name:
+        return False
+    try:
+        listing = device._run(["shell", "ls", DOWNLOAD_DIR])
+    except RuntimeError:
+        return False
+    return name in listing.split()
+
+
+def classify_apk_link(
+    elements: list[UiElement], activity: str = ""
+) -> tuple[InstallState, UiElement | None]:
+    """外链直下通道的状态判定（纯函数）。
+
+    比商店通道少一个 SEARCH 阶段：没有搜索结果页要挑行，链接点了就是等
+    安装器出现。`UNKNOWN` 在这里的含义是「既没看到安装器、也没有下载中
+    的字样」—— 可能是还在下载，也可能是落到了别的页面，交给上层继续观察。
+    """
+    if "InstallSuccess" in activity:
+        return InstallState.SUCCESS, None
+
+    if any("InstallInstalling" in activity for _ in (0,)):
+        return InstallState.INSTALLING, None
+
+    joined = " ".join(_label(element) for element in elements if _label(element))
+    if any(marker in joined for marker in _UNKNOWN_SOURCES_MARKERS):
+        # 交给上层 ask_human：这是设备级安全设置，不是任务步骤
+        return InstallState.UNKNOWN, None
+    if any(marker in joined for marker in _INSTALLING_MARKERS):
+        return InstallState.INSTALLING, None
+
+    installer = _find(elements, RID_INSTALL_OK)
+    if installer is not None:
+        return InstallState.INSTALLER, installer
+
+    alert = _find(elements, RID_ALERT_TITLE)
+    ok = _find(elements, RID_ALERT_OK)
+    if alert is not None and ok is not None:
+        return InstallState.DISCLAIMER, ok
+
+    return InstallState.DOWNLOADING, None
+
+
+@dataclass
+class ApkLinkDriver:
+    """外链直下通道的驱动器：每个可动作状态只推进一次。
+
+    坑与商店通道同源：`InstallSuccess` 会残留抢焦点，安装器确认页也可能
+    停留多轮。所以「点过一次就不再点」，剩下交给 `pm list packages` 判定。
+    """
+
+    tapped: dict[InstallState, int] = field(default_factory=dict)
+    history: list[InstallState] = field(default_factory=list)
+    installer_ref: str | None = None
+
+    def step(
+        self, elements: list[UiElement], activity: str = ""
+    ) -> tuple[InstallState, UiElement | None]:
+        state, target = classify_apk_link(elements, activity)
+        self.history.append(state)
+        if target is None:
+            return state, None
+        # 同一个安装器页面（同一个 app_name）只点一次
+        key = self._key(elements, state)
+        if self.tapped.get(state, 0) >= 1 and key == self.installer_ref:
+            return state, None
+        self.tapped[state] = self.tapped.get(state, 0) + 1
+        self.installer_ref = key
+        return state, target
+
+    @staticmethod
+    def _key(elements: list[UiElement], state: InstallState) -> str | None:
+        if state is not InstallState.INSTALLER:
+            return None
+        for element in elements:
+            if _short_rid(element) == "app_name" and _label(element):
+                return _label(element)
+        return None
+
+    @property
+    def done(self) -> bool:
+        return bool(self.history) and self.history[-1] is InstallState.SUCCESS
+
+
+def run_apk_link(
+    device,
+    url: str,
+    *,
+    dump_path: str = "d_class_apk.xml",
+    timeout_s: float = 180.0,
+    poll_s: float = 2.0,
+    sleep=__import__("time").sleep,
+    now=__import__("time").monotonic,
+) -> InstallOutcome:
+    """跑外链直下 APK 的安装链路：`open_url` → 系统安装器 → 一次确认。
+
+    真机事实（服务本机 APK 实测）：VIEW 打开 `.apk` 直链**不经过浏览器**，
+    系统下载器拉完直接弹 `PackageInstallerActivity`，点 `install_confirm_ok`
+    即装好；全程只有一次确认，也没有「安装未知应用」授权弹窗。
+
+    与 `run_install` 相同的两条纪律：开跑前 `reset_installer`，
+    **成功只由新包证明**。
+    """
+    if not is_apk_link(url):
+        raise ValueError(f"不是 APK 直链：{url}")
+
+    driver = ApkLinkDriver()
+    reset_installer(device)
+
+    stale = apk_file_name(url)
+    if download_exists(device, stale):
+        # 不自动删用户文件：删下载目录是不可逆操作，且这属于「环境不满足」，
+        # 应当报出来让人清理，而不是替人清。
+        return InstallOutcome(
+            ok=False, state=InstallState.DOWNLOADING, elapsed_s=0.0, trail=[],
+            detail=(f"下载目录已有同名文件 {stale}；系统下载器不会再弹安装提示，"
+                    f"请先清理 {DOWNLOAD_DIR}/{stale} 再重试"))
+
+    before = installed_packages(device)
+    started = now()
+    trail: list[str] = []
+    dump_failures = 0
+
+    device.open_url(url)
+    sleep(poll_s)
+
+    while now() - started < timeout_s:
+        try:
+            device.dump_ui(dump_path)
+            with open(dump_path, encoding="utf-8", errors="replace") as handle:
+                xml_text = handle.read()
+            dump_failures = 0
+        except (RuntimeError, OSError) as exc:
+            dump_failures += 1
+            trail.append(f"dump 失败第 {dump_failures} 次：{exc}")
+            if dump_failures >= 3:
+                trail.append("连续 3 次 dump 失败，提前结束")
+                break
+            sleep(poll_s)
+            continue
+
+        activity = ""
+        try:
+            activity = device.current_focus()
+        except RuntimeError:
+            pass
+
+        # 一次都没点过就看到 InstallSuccess → 上一次运行残留，不能算成功
+        if "InstallSuccess" in activity and not any(driver.tapped.values()):
+            activity = ""
+
+        state, target = driver.step(parse_ui_xml(xml_text), activity)
+        trail.append(f"{state.value}@{int(now() - started)}s")
+
+        if state is InstallState.SUCCESS:
+            break
+        if target is not None:
+            device.tap(*target.center)
+        sleep(poll_s)
+
+    new = installed_packages(device) - before
+    ok = bool(new)
+    if new:
+        detail = f"新增包：{', '.join(sorted(new))}"
+    elif driver.done:
+        detail = "页面显示安装成功但未检测到新包（可能是上一次运行留下的 InstallSuccess）"
+    else:
+        detail = "未检测到新包"
+    return InstallOutcome(ok=ok,
+                          state=driver.history[-1] if driver.history
                           else InstallState.UNKNOWN,
                           elapsed_s=round(now() - started, 1),
                           trail=trail, detail=detail)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 
+from zrb_agent import d_class
 from zrb_agent.d_class import (InstallDriver, InstallState, classify,
                                search_uri)
 from zrb_agent.perceive import parse_ui_xml
@@ -253,3 +254,172 @@ class DriverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ApkLinkTest(unittest.TestCase):
+    """外链直下 APK 通道（D 类第二条通道）。
+
+    三个真机事实决定了这组断言：不经浏览器、只有一次确认、没有未知来源弹窗。
+    """
+
+    def test_is_apk_link(self) -> None:
+        self.assertTrue(d_class.is_apk_link("http://h/x.apk"))
+        self.assertTrue(d_class.is_apk_link("https://h/x.APK?a=1"))
+        self.assertFalse(d_class.is_apk_link("https://h/x.apk.zip"))
+        self.assertFalse(d_class.is_apk_link("https://h/download"))
+        self.assertFalse(d_class.is_apk_link("market://search?q=x"))
+
+    def test_installer_page_is_installer(self) -> None:
+        xml_text = (
+            "<hierarchy><node text=\"\" resource-id=\"\" bounds=\"[0,0][1440,2560]\">"
+            "<node text=\"微软必应\" "
+            "resource-id=\"com.android.packageinstaller:id/app_name\" "
+            "bounds=\"[700,1000][900,1030]\"/>"
+            "<node text=\"安装\" clickable=\"true\" "
+            "resource-id=\"com.android.packageinstaller:id/install_confirm_ok\" "
+            "bounds=\"[510,1610][640,1700]\"/></node></hierarchy>"
+        )
+        state, target = d_class.classify_apk_link(parse_ui_xml(xml_text))
+        self.assertIs(state, InstallState.INSTALLER)
+        self.assertIsNotNone(target)
+        self.assertEqual(target.center, (575, 1655))
+
+    def test_success_only_by_activity(self) -> None:
+        state, target = d_class.classify_apk_link(
+            parse_ui_xml("<hierarchy><node text=\"取消\" /></hierarchy>"),
+            "com.android.packageinstaller.InstallSuccess")
+        self.assertIs(state, InstallState.SUCCESS)
+        self.assertIsNone(target)
+
+    def test_installing_and_downloading(self) -> None:
+        state, target = d_class.classify_apk_link(
+            parse_ui_xml("<hierarchy><node text=\"正在下载…\" "
+                         "bounds=\"[100,200][1300,300]\">"
+                         "<node text=\"1.2 MB\" "
+                         "bounds=\"[100,320][600,400]\"/></node></hierarchy>"))
+        self.assertIs(state, InstallState.INSTALLING)
+        self.assertIsNone(target)
+        state, target = d_class.classify_apk_link(
+            parse_ui_xml("<hierarchy><node text=\"\"/></hierarchy>"))
+        self.assertIs(state, InstallState.DOWNLOADING)
+        self.assertIsNone(target)
+
+    def test_unknown_sources_is_not_tapped(self) -> None:
+        xml_text = (
+            "<hierarchy><node text=\"允许来自此来源的应用\" "
+            "bounds=\"[100,900][1300,1000]\">"
+            "<node text=\"允许\" clickable=\"true\" "
+            "resource-id=\"com.android.settings:id/button1\" "
+            "bounds=\"[100,1100][1300,1200]\"/></node></hierarchy>"
+        )
+        state, target = d_class.classify_apk_link(parse_ui_xml(xml_text))
+        self.assertIs(state, InstallState.UNKNOWN)
+        self.assertIsNone(target, "给未知来源授权是设备安全设置，必须 ask_human")
+
+    def test_disclaimer_still_handled(self) -> None:
+        xml_text = (
+            "<hierarchy><node text=\"安装提示\" "
+            "resource-id=\"com.heytap.market:id/alertTitle\" "
+            "bounds=\"[100,1500][1300,1600]\"/>"
+            "<node text=\"安装\" clickable=\"true\" "
+            "resource-id=\"com.heytap.market:id/button1\" "
+            "bounds=\"[1000,2300][1100,2400]\"/></hierarchy>"
+        )
+        state, target = d_class.classify_apk_link(parse_ui_xml(xml_text))
+        self.assertIs(state, InstallState.DISCLAIMER)
+        self.assertEqual(target.center, (1050, 2350))
+
+    def test_same_installer_tapped_once(self) -> None:
+        xml_text = (
+            "<hierarchy><node text=\"微软必应\" "
+            "resource-id=\"com.android.packageinstaller:id/app_name\"/>"
+            "<node text=\"安装\" clickable=\"true\" "
+            "resource-id=\"com.android.packageinstaller:id/install_confirm_ok\" "
+            "bounds=\"[510,1610][640,1700]\"/></hierarchy>"
+        )
+        elements = parse_ui_xml(xml_text)
+        driver = d_class.ApkLinkDriver()
+        first = driver.step(elements)
+        second = driver.step(elements)
+        self.assertIsNotNone(first[1])
+        self.assertIsNone(second[1], "同一个安装器页面只点一次")
+
+    def test_rejects_non_apk_url(self) -> None:
+        with self.assertRaises(ValueError):
+            d_class.run_apk_link(_NullDevice(), "https://h/download")
+
+
+class _NullDevice:
+    """只用来触发参数校验，不该被真正调用。"""
+
+    def _run(self, *args: str) -> str:
+        raise AssertionError("参数校验应该在触到设备之前就抛错")
+
+    def open_url(self, url: str) -> None:
+        raise AssertionError("不该走到这里")
+
+    def dump_ui(self, path: str) -> None:
+        raise AssertionError("不该走到这里")
+
+    def current_focus(self) -> str:
+        raise AssertionError("不该走到这里")
+
+    def tap(self, x: int, y: int) -> None:
+        raise AssertionError("不该走到这里")
+
+class ApkPreconditionTest(unittest.TestCase):
+    """同名残留文件必须先查出来，不能等超时。"""
+
+    def test_apk_file_name(self) -> None:
+        self.assertEqual(
+            d_class.apk_file_name("http://h:8765/test.apk"), "test.apk")
+        self.assertEqual(
+            d_class.apk_file_name("https://h/a/b/x.apk?t=1#f"), "x.apk")
+        self.assertEqual(d_class.apk_file_name("https://h/"), "")
+
+    def test_download_exists(self) -> None:
+        class Dev:
+            def __init__(self, listing: str) -> None:
+                self.listing = listing
+
+            def _run(self, args: list[str]) -> str:
+                return self.listing
+
+        self.assertTrue(d_class.download_exists(
+            Dev("bingchina.apk\ntest.apk\n"), "test.apk"))
+        self.assertFalse(d_class.download_exists(
+            Dev("bingchina.apk\n"), "test.apk"))
+
+    def test_stale_download_fails_fast(self) -> None:
+        """有同名文件时立刻返回，不要空转等超时（实测空转了 182.7 秒）。"""
+
+        class Dev:
+            def __init__(self) -> None:
+                self.calls: list[list[str]] = []
+                self.taps = 0
+
+            def _run(self, args: list[str]) -> str:
+                self.calls.append(args)
+                if args[:2] == ["shell", "pm"]:
+                    return ""
+                if args[:2] == ["shell", "ls"]:
+                    return "test.apk\n"
+                return ""
+
+            def open_url(self, url: str) -> None:
+                raise AssertionError("前置条件不满足时不该真去下载")
+
+            def dump_ui(self, path: str) -> None:
+                raise AssertionError("不该 dump")
+
+            def current_focus(self) -> str:
+                raise AssertionError("不该取焦点")
+
+            def tap(self, x: int, y: int) -> None:
+                self.taps += 1
+
+        dev = Dev()
+        out = d_class.run_apk_link(dev, "http://h/test.apk")
+        self.assertFalse(out.ok)
+        self.assertEqual(out.elapsed_s, 0.0)
+        self.assertIn("同名文件", out.detail)
+        self.assertEqual(dev.taps, 0)
