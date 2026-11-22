@@ -6,6 +6,7 @@
 {"id": "P743号调查-泰国", "title": "P743号调查-泰国", "reward": 5.0, "verdict": "abort", "reason": "REGION_REJECTED", "allowed_regions": ["泰国"], "page_text": "P743号调查-泰国 赏金5.00元\n报名条件：仅限泰国IP\n操作步骤：\n1.打开问卷链接\n2.按提示答题"}
 {"id": "食品调查2", "title": "食品调查2", "reward": 1.5, "verdict": "abort", "reason": "REGION_REJECTED", "allowed_regions": ["广州", "东莞", "南宁", "武汉", "长沙", "南昌", "宁波"], "page_text": "食品调查2 赏金1.50元\n报名条件：有IP控制，仅限广州/东莞/南宁/武汉/长沙/南昌/宁波\n操作步骤：\n1.打开链接进入问卷\n2.填写家庭食品采购情况\n3.提交"}
 {"id": "得物星愿", "title": "得物星愿", "reward": 1.62, "verdict": "abort", "reason": "NEEDS_LOGIN", "page_text": "【得物星愿】9简单好做速来超快 赏金1.62元 545人已赚 人均8分钟 剩余136\n操作步骤：\n1.用浏览器打开链接复制口令\n2.截图领取口令页面（必须）\n3.复制口令打开得物弹窗助力打卡"}
+{"id": "红果免费短剧", "title": "红果免费短剧", "reward": 1.28, "verdict": "abort", "reason": "NEEDS_LOGIN", "page_text": "【红果免费短剧】简单 赏金1.28元\n操作步骤：\n1.复制链接前往浏览器\n2.再依次复制口令打开红果短剧搜索🔎\n3.助力所有，再右下角我的截图"}
 {"id": "淘宝闪购26050801", "title": "淘宝闪购26050801", "reward": 0.3, "verdict": "abort", "reason": "NEEDS_ALIPAY", "page_text": "【淘宝闪购26050801】支付宝淘闪领礼品 赏金0.30元\n报名条件：限制新用户\n操作步骤：\n1.打开支付宝扫码\n2.领取礼品后截图\n3.上传截图"}
 {"id": "爱回收", "title": "爱回收", "reward": 0.68, "verdict": "abort", "reason": "NEEDS_SCANNER", "page_text": "【爱回收】不下载 赏金0.68元 3秒搞定，不下载纯登录\n操作步骤：\n1.打开链接保存图片扫码\n2.扫码后截图点立即领取"}
 {"id": "沐浅光青荷", "title": "沐浅光青荷", "reward": 0.85, "verdict": "abort", "reason": "NEEDS_LOGIN", "page_text": "【沐浅光青荷】4条视频速结 赏金0.85元 剩余117\n操作步骤：\n1.复制到浏览器下载（每日更新）\n2.代号写众人帮加账号手机号\n3.看四条视频\n4.截图上传"}

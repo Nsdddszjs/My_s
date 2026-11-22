@@ -127,6 +127,23 @@ class FeasibilityGuardTest(unittest.TestCase):
         self.assertEqual(feasibility(["复制浏览器打开下载", "正确答题"],
                                      type="每日一次 勿多账号提交"),
                          (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_explicit_register_and_code(self):
+        # Issue #49：注册 / 验证码也是显式登录信号，即使通篇没写「登录」。
+        self.assertEqual(feasibility(["打开链接注册", "输入验证码"]),
+                         (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_invite_share_claim_exchange(self):
+        # Issue #49 追加的四个依赖登录态的动作词；逐词单独验证，避免互相掩盖。
+        for step in ("邀请好友", "分享给好友", "领取奖励", "兑换礼品"):
+            with self.subTest(step=step):
+                self.assertEqual(feasibility([step]),
+                                 (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_needs_login_by_audience_newcomer_first_order(self):
+        self.assertEqual(feasibility(["完成任务"], type="新人首单"),
+                         (Verdict.ABORT, AbortReason.NEEDS_LOGIN))
+    def test_pure_browse_without_account_action_is_not_login(self):
+        # 纯浏览器浏览 + 截图不需要账号，不能被登录规则误伤。
+        self.assertEqual(feasibility(["浏览器打开链接浏览商品", "截图上传"]),
+                         (Verdict.DO, None))
     def test_download_only_corpus_task_is_never_do(self):
         # 【仙遇】3 元真机语料：唯一一步只写浏览器下载安装，真实达标条件在
         # sm（操作说明图）里。文本守卫读不到图片里的条件，至少必须 ABORT；
