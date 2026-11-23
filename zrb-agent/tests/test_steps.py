@@ -72,5 +72,44 @@ class StepSchemaTest(unittest.TestCase):
         self.assertEqual(check_feasibility(preview)[0], Verdict.DEFERRED)
 
 
+class StepIndexesTest(unittest.TestCase):
+    """执行层需要的两个索引：哪步要截图、哪步要填字（1 起，与 setpcount 对齐）。"""
+
+    def _bounty(self, steps):
+        return Bounty("t1", "索引", 1.0, steps, [], [])
+
+    def test_capture_indexes_are_one_based(self):
+        bounty = self._bounty([
+            {"text": "打开链接", "type": "cap"},
+            {"text": "浏览商品", "type": "nocap"},
+            {"text": "提交成功截图", "type": "cap"},
+        ])
+        self.assertEqual(bounty.capture_indexes(), [1, 3])
+
+    def test_plain_string_steps_have_no_capture(self):
+        # 旧数据只有文本、没有类型：不能猜「含截图二字就是要截图」。
+        self.assertEqual(self._bounty(["截图上传", "滑动浏览"]).capture_indexes(), [])
+
+    def test_text_input_indexes_come_from_has_text_input(self):
+        bounty = self._bounty([
+            {"text": "下载并登录", "type": "cap"},
+            {"text": "打开链接", "type": "nocap"},
+            {"text": "助力成功截图", "type": "cap"},
+            {"text": "知道扣1体验", "type": "nocap",
+             "has_text_input": True, "input_hint": "按要求输入文字"},
+        ])
+        self.assertEqual(bounty.text_input_indexes(), [4])
+        self.assertEqual(bounty.capture_indexes(), [1, 3])
+
+    def test_no_text_input_returns_empty_list(self):
+        self.assertEqual(self._bounty([{"text": "浏览", "type": "cap"}]).text_input_indexes(), [])
+
+    def test_indexes_survive_round_trip(self):
+        bounty = self._bounty([{"text": "填手机号", "type": "nocap", "has_text_input": True}])
+        restored = Bounty.from_dict(bounty.to_dict())
+        self.assertEqual(restored.text_input_indexes(), [1])
+        self.assertEqual(restored.capture_indexes(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
