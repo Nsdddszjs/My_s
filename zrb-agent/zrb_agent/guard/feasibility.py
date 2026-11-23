@@ -162,9 +162,29 @@ def _completion_unspecified(bounty: Bounty) -> bool:
 # 语义是「这单做不了」，因此排在任何环境缺件修正之前。
 _PREREQ_STRONG = re.compile(
     r"(第[一二三四五六七1234567]天"
-    r"|做过我的|之前做过|做过的"
+    r"|做过我的|之前做过"
     r"|需要先完成|先做完)"
 )
+# 「做过的」单独一支：它有两种相反语义，必须看后半句才能定性。
+#   前序依赖： 「做过的不能再做」            → 这单做不了
+#   要求重做： 「做过的必须按要求重新做一次」→ 每天都能做（【轩尼诗1123】）
+_PREREQ_DONE = re.compile(r"做过的")
+_REDO_CLAUSE = re.compile(
+    r"做过的([^。；！？，、]{0,24}?)(重新|重做|再做|每日可做|每天可做)"
+)
+_REDO_NEGATION = re.compile(r"[不别勿没]")
+
+
+def _is_redo_instruction(text: str) -> bool:
+    """「做过的…重新做一次」是每日可做，不是前序依赖。
+
+    必须看「做过的」与动词之间有没有否定词：「做过的不能再做」是被禁止重复，
+    属于真前序依赖；「做过的必须按要求重新做一次」才是要求重做。
+    """
+    for match in _REDO_CLAUSE.finditer(text):
+        if not _REDO_NEGATION.search(match.group(1) or ""):
+            return True
+    return False
 _PREREQ_WEAK = re.compile(
     r"(后续(赏金|奖励|任务)|有后续|两天后续|三天后续|后续比这个)"
 )
@@ -206,7 +226,12 @@ def _has_prerequisite(bounty: Bounty) -> bool:
     text = " ".join(
         part for part in (bounty.title, bounty.type, bounty.limite, *bounty.step_texts) if part
     )
-    return bool(_PREREQ_STRONG.search(text) or _PREREQ_WEAK.search(text))
+    if _PREREQ_STRONG.search(text) or _PREREQ_WEAK.search(text):
+        return True
+    # 「做过的」要先排除「要求重做」语境，否则每日可做的任务会被当成前序依赖。
+    if _is_redo_instruction(text):
+        return False
+    return bool(_PREREQ_DONE.search(text))
 
 
 def _named_apps(text: str, env: Environment) -> tuple[list[str], list[str]]:
