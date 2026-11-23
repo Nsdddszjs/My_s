@@ -442,6 +442,27 @@ class PrerequisiteTest(unittest.TestCase):
     def test_prerequisite_has_its_own_kind(self):
         self.assertIs(AbortReason.NEEDS_PREREQUISITE.kind, ReasonKind.PREREQUISITE)
 
+    def test_redo_instruction_is_not_prerequisite(self):
+        # 帮帮团【轩尼诗1123】0.13 元：limite 明确写「每日可做」，
+        # 「做过的必须按要求重新做一次」是**要求重做**，不是前序依赖。
+        reasons = check_reasons(
+            ["手机浏览器打开链接，点击跳转到京东"],
+            limite="每个任务链接不同，做过的必须按要求重新做一次，每日可做",
+        )[1]
+        self.assertNotIn(AbortReason.NEEDS_PREREQUISITE, reasons)
+
+    def test_done_before_is_still_prerequisite(self):
+        # 「做过的不能再做」才是真前序：同一天只能做一次的单做不了。
+        reasons = check_reasons(["打开链接浏览"], limite="做过的不能再做")[1]
+        self.assertIn(AbortReason.NEEDS_PREREQUISITE, reasons)
+
+    def test_strong_prerequisite_beats_redo_clause(self):
+        # 只要出现「第N天」这种强信号，即便同时有重做字样，也仍然算前序依赖。
+        reasons = check_reasons(
+            ["领取第三天的45星琼"], limite="做过的必须按要求重新做一次",
+        )[1]
+        self.assertIn(AbortReason.NEEDS_PREREQUISITE, reasons)
+
 
 class TwoPhasePreviewTest(unittest.TestCase):
     """大厅预览（steps_incomplete）只给 1 步时不能下可行性结论。"""
