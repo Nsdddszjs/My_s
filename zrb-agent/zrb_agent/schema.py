@@ -152,6 +152,23 @@ class Bounty:
         """步骤原文列表；只关心文本的守卫层与旧调用方用它。"""
         return [step.text for step in self.steps]
 
+    def capture_indexes(self) -> list[int]:
+        """需要提交截图证据的步骤序号（**1 起**，与 ``setpcount_cap`` 编号一致）。
+
+        执行层据此在「那一步做完」时调 ``capture_evidence``，而不是按文本里有没有
+        「截图」二字去猜：【微店助力26112101】的 nocap 步骤写的是「微店扫码助力
+        体验，没有的先去应用商店下载微店…」，一个字都没提截图，却仍然要证据。
+        """
+        return [index for index, step in enumerate(self.steps, 1) if step.needs_capture]
+
+    def text_input_indexes(self) -> list[int]:
+        """需要填入文字的步骤序号（**1 起**）；空列表表示本单没有文字输入。
+
+        「有输入框」不等于「必须填」：只有 ``has_text_input`` 为真才算任务完成
+        条件。提交前可用它断言「该填的都填了」，避免只靠 toast 发现漏填。
+        """
+        return [index for index, step in enumerate(self.steps, 1) if step.has_text_input]
+
     def to_dict(self) -> dict:
         """转换为可 JSON 序列化的字典（步骤序列化为 ``Step`` 字典）。"""
         return asdict(self)
